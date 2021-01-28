@@ -4,5 +4,6 @@ This is a Github repository for my Part II dissertation. As a third year Compute
 Software side implementation:
 https://github.com/simonasmulevicius/ngtcp2
 
-Hardware side implementation:
-https://github.com/simonasmulevicius/NetFPGA-SUME-live
+Hardware side implementations:
+https://github.com/simonasmulevicius/NetFPGA-SUME-live (release 1.10)
+https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
