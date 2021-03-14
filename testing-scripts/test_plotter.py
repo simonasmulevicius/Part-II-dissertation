@@ -6,14 +6,26 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
+# 0. Constants
+NUMBER_OF_REPEATED_EXPERIMENTS = 3
 
-payload_sizes = [10, 100, 1000, 10000] #cd  , 100000, 1000000, 10000000, 100000000, 1000000000, 4294967295]
+
+# payload_sizes          = [10,     100,   1024,  10240 , 102400 ]#, 1048576, 10485760, 104857600, 1073741824, 4294967295]
+# payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB']#,  '1MB',   '10MB',   '100MB',      '1GB',      '4GB']
+
+
+# payload_sizes          = [10240,  102400, 1048576, 10485760] #, 104857600] #, 1073741824, 4294967295]
+# payload_sizes_in_bytes = ['10KB', '100KB',  '1MB',   '10MB'] #,   '100MB'] #,      '1GB',      '4GB']
+
+payload_sizes          = [   10,    100,  1024,  10240,  102400, 1048576, 10485760, 104857600, 1073741824, 4294967295]
+payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB',   '1MB',   '10MB',   '100MB',       '1GB',     '4GB']
+
 
 def perform_measurement(parameters):
-    print("parameters: ", parameters)
+    # print("parameters: ", parameters)
     command_output = subprocess.run(parameters, stdout=subprocess.PIPE, text=True).stdout
-    # print("command_output:")
-    # print(command_output)
+    print("command_output:")
+    print(command_output)
 
     total_delay_ms           = 0
     requests_per_second      = 0
@@ -57,11 +69,20 @@ def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
         parameters.extend(["../../nghttp2/src/h2load", "--npn-list", "h3", url])
         parameters.extend(parameter_list_suffix)
         print("parameters: ", parameters)
+        
+        repeated_delays      = []
+        repeated_requests    = []
+        repeated_throughputs = []
+        
+        for _ in range(NUMBER_OF_REPEATED_EXPERIMENTS):
+            measurements = perform_measurement(parameters)
+            repeated_delays.append(measurements['total_delay_ms'])
+            repeated_requests.append(measurements['requests_per_second'])
+            repeated_throughputs.append(measurements['throughput_KB_per_second'])
 
-        measurements = perform_measurement(parameters)
-        delays.append(measurements['total_delay_ms'])
-        requests.append(measurements['requests_per_second'])
-        throughputs.append(measurements['throughput_KB_per_second'])
+        delays.append(repeated_delays)
+        requests.append(repeated_requests)
+        throughputs.append(repeated_throughputs)
 
     print(delays)
 
@@ -70,10 +91,6 @@ def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
         "throughputs": throughputs})
 
 
-
-
-
-# Data for plotting
 
 # fig, (ax1, ax2, ax3) = plt.subplots(3)
 # ax1.plot(payload_sizes, delays)
@@ -117,26 +134,92 @@ def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
 
 
 
-measurements_on_same_cores       = perform_group_of_measurements(["taskset", "0x1", "ip", "netns", "exec", "mr_client"], []) #[]
-measurements_on_different_cores  = perform_group_of_measurements(["taskset", "0x2", "ip", "netns", "exec", "mr_client"], []) #[]
+
+# 1. Perform measurements
+measurements_on_same_cores       = perform_group_of_measurements(["taskset", "0x1", "ip", "netns", "exec", "mr_client"], [])
+measurements_on_different_cores  = perform_group_of_measurements(["taskset", "0x2", "ip", "netns", "exec", "mr_client"], [])
 
 print(payload_sizes)
 print(measurements_on_same_cores['throughputs'])
 print(measurements_on_different_cores['throughputs'])
 
-fig, ax = plt.subplots(1)
-ax.plot(payload_sizes, measurements_on_same_cores['throughputs'],    label='Client and server on the same core')
-ax.plot(payload_sizes, measurements_on_different_cores['throughputs'],    label='Client and server on different cores')
-ax.set(xlabel='Payload size', ylabel='throughput_KB_per_second')
-ax.grid()
+# 2. Draw measurements
+# BOX plotter
 
-fig.savefig("test.png")
-plt.xscale("log")
-plt.title('Throughput via node B (A-to-B-to-A)')
+data_a = measurements_on_same_cores['throughputs']
+data_b = measurements_on_different_cores['throughputs']
 
-# From https://stackoverflow.com/questions/22263807/how-is-order-of-items-in-matplotlib-legend-determined
-handles, labels = ax.get_legend_handles_labels()
-labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: t[0]))
-ax.legend(handles, labels)
 
-plt.show()
+# The code of this function is taken from: https://stackoverflow.com/questions/16592222/matplotlib-group-boxplots
+def draw_boxplot():
+    ticks = payload_sizes_in_bytes
+
+    def set_box_color(bp, color):
+        plt.setp(bp['boxes'], color=color)
+        plt.setp(bp['whiskers'], color=color)
+        plt.setp(bp['caps'], color=color)
+        plt.setp(bp['medians'], color=color)
+
+    # plt.figure()
+    fig, ax = plt.subplots(1)
+
+
+    # bpl = plt.boxplot(data_a, positions=np.array(range(len(data_a)))*2.0-0.3, sym='', widths=0.6)
+    # bpr = plt.boxplot(data_b, positions=np.array(range(len(data_b)))*2.0+0.3, sym='', widths=0.6)
+
+    bpl = plt.boxplot(data_a, positions=np.array(range(len(data_a)))*2.0, sym='', widths=0.6)
+    bpr = plt.boxplot(data_b, positions=np.array(range(len(data_a)))*2.0, sym='', widths=0.6)
+
+    set_box_color(bpl, '#D7191C') # colors are from http://colorbrewer2.org/
+    set_box_color(bpr, '#2C7BB6')
+
+    # draw temporary red and blue lines and use them to create a legend
+    plt.plot([], c='#D7191C', label='Client and server on the same core')
+    plt.plot([], c='#2C7BB6', label='Client and server on different cores')
+    plt.legend()
+
+    plt.xticks(range(0, len(ticks) * 2, 2), ticks)
+    plt.xlim(-2, len(ticks)*2)
+
+    ax.set(xlabel='Requested file size, Bytes', ylabel='Throughput, KBytes/second')
+    plot_title = 'Throughput via node B (A-to-B-to-A)'
+    fig.savefig(plot_title + ".png")
+    plt.title(plot_title)
+    plt.show()
+
+draw_boxplot()
+
+
+
+
+
+
+
+
+
+
+# # OLD Plotter
+# measurements_on_same_cores       = perform_group_of_measurements(["taskset", "0x1", "ip", "netns", "exec", "mr_client"], []) #[]
+# measurements_on_different_cores  = perform_group_of_measurements(["taskset", "0x2", "ip", "netns", "exec", "mr_client"], []) #[]
+
+# print(payload_sizes)
+# print(measurements_on_same_cores['throughputs'])
+# print(measurements_on_different_cores['throughputs'])
+
+# fig, ax = plt.subplots(1)
+# ax.plot(payload_sizes, measurements_on_same_cores['throughputs'],    label='Client and server on the same core')
+# ax.plot(payload_sizes, measurements_on_different_cores['throughputs'],    label='Client and server on different cores')
+# ax.set(xlabel='Requested file size, Bytes', ylabel='Throughput, KBytes/second')
+# ax.grid()
+
+# plot_title = 'Throughput via node B (A-to-B-to-A)'
+# fig.savefig(plot_title + ".png")
+# plt.xscale("log")
+# plt.title(plot_title)
+
+# # From https://stackoverflow.com/questions/22263807/how-is-order-of-items-in-matplotlib-legend-determined
+# handles, labels = ax.get_legend_handles_labels()
+# labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: t[0]))
+# ax.legend(handles, labels)
+
+# plt.show()
