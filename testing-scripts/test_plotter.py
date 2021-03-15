@@ -1,7 +1,6 @@
 print("Plotter")
 import subprocess
 from io import StringIO
-
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -43,8 +42,13 @@ def perform_measurement(parameters):
                 total_delay_ms       = 1000*float(measurements[0].replace('s', ''))
             requests_per_second      = float(measurements[1].replace('req/s', ''))
             throughput_KB_per_second = float(measurements[2][:-4])
+
+            assert (not any(symbol.isdigit() for symbol in measurements[2][-4:]))
+
             if "MB/s" == measurements[2][-4:]:
                 throughput_KB_per_second *= 1024
+            elif "GB/s" == measurements[2][-4:]:
+                throughput_KB_per_second *= 1024*1024
             
             print(total_delay_ms, "ms")
             print(requests_per_second, "req/s")
