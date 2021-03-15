@@ -13,12 +13,11 @@ NUMBER_OF_REPEATED_EXPERIMENTS = 3
 # payload_sizes          = [10,     100,   1024,  10240 , 102400 ]#, 1048576, 10485760, 104857600, 1073741824, 4294967295]
 # payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB']#,  '1MB',   '10MB',   '100MB',      '1GB',      '4GB']
 
+payload_sizes          = [10240,  102400, 1048576, 10485760] #, 104857600] #, 1073741824, 4294967295]
+payload_sizes_in_bytes = ['10KB', '100KB',  '1MB',   '10MB'] #,   '100MB'] #,      '1GB',      '4GB']
 
-# payload_sizes          = [10240,  102400, 1048576, 10485760] #, 104857600] #, 1073741824, 4294967295]
-# payload_sizes_in_bytes = ['10KB', '100KB',  '1MB',   '10MB'] #,   '100MB'] #,      '1GB',      '4GB']
-
-payload_sizes          = [   10,    100,  1024,  10240,  102400, 1048576, 10485760, 104857600, 1073741824, 4294967295]
-payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB',   '1MB',   '10MB',   '100MB',       '1GB',     '4GB']
+# payload_sizes          = [   10,    100,  1024,  10240,  102400, 1048576, 10485760, 104857600, 1073741824, 4294967295]
+# payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB',   '1MB',   '10MB',   '100MB',       '1GB',     '4GB']
 
 
 def perform_measurement(parameters):
@@ -144,14 +143,10 @@ print(measurements_on_same_cores['throughputs'])
 print(measurements_on_different_cores['throughputs'])
 
 # 2. Draw measurements
-# BOX plotter
 
-data_a = measurements_on_same_cores['throughputs']
-data_b = measurements_on_different_cores['throughputs']
-
-
+# Box plotter
 # The code of this function is taken from: https://stackoverflow.com/questions/16592222/matplotlib-group-boxplots
-def draw_boxplot():
+def draw_boxplot(data_seq1, data_seq2, label1, label2, y_axis_label, title_of_plot):
     ticks = payload_sizes_in_bytes
 
     def set_box_color(bp, color):
@@ -163,31 +158,46 @@ def draw_boxplot():
     # plt.figure()
     fig, ax = plt.subplots(1)
 
+    box_plot1 = plt.boxplot(data_seq1, positions=np.array(range(len(data_seq1)))*2.0, sym='', widths=0.6)
+    box_plot2 = plt.boxplot(data_seq2, positions=np.array(range(len(data_seq2)))*2.0, sym='', widths=0.6)
 
-    # bpl = plt.boxplot(data_a, positions=np.array(range(len(data_a)))*2.0-0.3, sym='', widths=0.6)
-    # bpr = plt.boxplot(data_b, positions=np.array(range(len(data_b)))*2.0+0.3, sym='', widths=0.6)
-
-    bpl = plt.boxplot(data_a, positions=np.array(range(len(data_a)))*2.0, sym='', widths=0.6)
-    bpr = plt.boxplot(data_b, positions=np.array(range(len(data_a)))*2.0, sym='', widths=0.6)
-
-    set_box_color(bpl, '#D7191C') # colors are from http://colorbrewer2.org/
-    set_box_color(bpr, '#2C7BB6')
+    set_box_color(box_plot1, '#D7191C') # colors are from http://colorbrewer2.org/
+    set_box_color(box_plot2, '#2C7BB6')
 
     # draw temporary red and blue lines and use them to create a legend
-    plt.plot([], c='#D7191C', label='Client and server on the same core')
-    plt.plot([], c='#2C7BB6', label='Client and server on different cores')
+    plt.plot([], c='#D7191C', label=label1)
+    plt.plot([], c='#2C7BB6', label=label2)
     plt.legend()
 
     plt.xticks(range(0, len(ticks) * 2, 2), ticks)
     plt.xlim(-2, len(ticks)*2)
 
-    ax.set(xlabel='Requested file size, Bytes', ylabel='Throughput, KBytes/second')
-    plot_title = 'Throughput via node B (A-to-B-to-A)'
+    ax.set(xlabel='Requested file size, Bytes', ylabel=y_axis_label)
+    plot_title = title_of_plot
     fig.savefig(plot_title + ".png")
     plt.title(plot_title)
     plt.show()
 
-draw_boxplot()
+draw_boxplot(measurements_on_same_cores['throughputs'], 
+             measurements_on_different_cores['throughputs'],
+             'Client and server on the same core',
+             'Client and server on different cores',
+             'Throughput, KBytes/second', 
+             'Throughput when packets go via machine B (A1-to-B-to-A2)')
+
+draw_boxplot(measurements_on_same_cores['delays'], 
+             measurements_on_different_cores['delays'],
+             'Client and server on the same core',
+             'Client and server on different cores',
+             'Delay, ms',
+             'Time required to transfer a file when packets go via machine B (A1-to-B-to-A2)')
+
+draw_boxplot(measurements_on_same_cores['requests'], 
+             measurements_on_different_cores['requests'],
+             'Client and server on the same core',
+             'Client and server on different cores',
+             'Requests per resond, (number of requests)/s',
+             'Requests per resond when packets go via machine B (A1-to-B-to-A2)')
 
 
 
