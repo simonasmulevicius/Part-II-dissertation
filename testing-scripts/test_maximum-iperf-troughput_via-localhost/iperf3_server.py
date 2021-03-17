@@ -10,4 +10,4 @@ def run_command_in_terminal(parameters):
     print(command_output)
     return command_output
 
-run_command_in_terminal(["taskset 0x1 iperf3 -s"])
+run_command_in_terminal(["taskset", "-c", "0", "iperf3", "-s"])
