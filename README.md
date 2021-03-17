@@ -38,14 +38,6 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
     make -j$(nproc) check
     make install
     cd ..  
-
-    git clone https://github.com/ngtcp2/ngtcp2
-    cd ngtcp2
-    autoreconf -i
-    ./configure --prefix=$PWD/build PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib"
-    make -j$(nproc) check
-    make install
-    cd ..
     
     git clone https://github.com/ngtcp2/ngtcp2
     cd ngtcp2
