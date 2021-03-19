@@ -1,15 +1,4 @@
-import subprocess
-from io import StringIO
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-
-
-def run_command_in_terminal(parameters):
-    command_output = subprocess.run(parameters, stdout=subprocess.PIPE, text=True).stdout
-    print("command_output:")
-    print(command_output)
-    return command_output
+from testing_libraries.bashterminal.commands import *
 
 
 NGTCP2_RELATIVE_LOCATION = "../../../ngtcp2/"
@@ -19,7 +8,7 @@ run_command_in_terminal(["taskset", "0x1", "ip", "netns", "exec", "mr_server",
                         "--htdocs", NGTCP2_RELATIVE_LOCATION + "/examples/servers_folder", 
                         "-q", 
                         "--max-dyn-length=4g", 
-                        "--max-udp-payload-size=1280", 
+                        "--max-udp-payload-size=1500", 
                         "10.2.2.101", "7777", 
                         NGTCP2_RELATIVE_LOCATION + "/examples/server.key", 
                         NGTCP2_RELATIVE_LOCATION + "/examples/server.cert"])

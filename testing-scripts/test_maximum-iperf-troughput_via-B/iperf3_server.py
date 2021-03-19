@@ -1,13 +1,4 @@
-import subprocess
-from io import StringIO
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
+from testing_libraries.bashterminal.commands import *
 
-def run_command_in_terminal(parameters):
-    command_output = subprocess.run(parameters, stdout=subprocess.PIPE, text=True).stdout
-    print("command_output:")
-    print(command_output)
-    return command_output
-
+set_MTU_server(9000, False)
 run_command_in_terminal(["taskset", "-c", "0", "ip", "netns", "exec", "mr_server", "iperf3", "-s"])

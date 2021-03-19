@@ -4,95 +4,27 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-def run_command_in_terminal(parameters):
-    command_output = subprocess.run(parameters, stdout=subprocess.PIPE, text=True).stdout
-    return command_output
-
-
-def set_MTU(mtu):
-    run_command_in_terminal(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client", "ifconfig", "eth2", "mtu", mtu])
-
-def split_string_into_array_of_words(string):
-    raw_words = string.split(" ")
-    words = [word for word in raw_words if word != '']
-    # print(words)
-    return words
-
-
-def convert_bitrate_to_bytes_per_second(bitrate, bitrate_units):
-    # print("bitrate:",bitrate)
-    converted_bitrate_in_bytes = bitrate/8
-    if(bitrate_units == "Kbits/sec"):
-        converted_bitrate_in_bytes = converted_bitrate_in_bytes*1024
-    elif(bitrate_units == "Mbits/sec"):
-        converted_bitrate_in_bytes = converted_bitrate_in_bytes*1024*1024
-    elif(bitrate_units == "Gbits/sec"):
-        converted_bitrate_in_bytes = converted_bitrate_in_bytes*1024*1024*1024
-    # print("converted bitrate (Bytes/sec):", converted_bitrate_in_bytes)
-    
-    return converted_bitrate_in_bytes
-
-assert convert_bitrate_to_bytes_per_second(449, 'Kbits/sec') == 57472
-assert convert_bitrate_to_bytes_per_second(449, 'Mbits/sec') == 58851328
-assert convert_bitrate_to_bytes_per_second(1.40, 'Gbits/sec') == 187904819.2
-
-def perform_perf3_measurement(mtu):
-    print("Using MTU:", str(mtu), "bytes")
-    set_MTU(str(mtu))
-    command_output = run_command_in_terminal(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client", "iperf3", "-c", "10.2.2.101", "--udp", "-b", "0"])
-    print("command_output:")
-    print(command_output)
-    
-    output_lines = command_output.splitlines()
-    # # TODO include samples into the graph
-    # for line in output_lines[3:13]:
-    #     words = split_string_into_array_of_words(line)
-
-    sender_line          = output_lines[15]
-    sender_words         = split_string_into_array_of_words(sender_line)
-    sender_bitrate_units = sender_words[-6]
-    sender_bitrate       = convert_bitrate_to_bytes_per_second(float(sender_words[-7]), sender_bitrate_units)
-
-    receiver_line          = output_lines[16]
-    receiver_words         = split_string_into_array_of_words(receiver_line)
-    receiver_bitrate_units = receiver_words[-6]
-    receiver_bitrate       = convert_bitrate_to_bytes_per_second(float(receiver_words[-7]), receiver_bitrate_units)
-    receiver_proportion_of_losses = float(receiver_words[-2].replace("(", "").replace(")", "").replace("%", ""))
-
-    print("sender_bitrate_bytes_per_second  : ",   sender_bitrate,   sender_bitrate_units)
-    print("receiver_bitrate_bytes_per_second: ", receiver_bitrate, receiver_bitrate_units) 
-    print("receiver_proportion_of_losses : ", receiver_proportion_of_losses) 
-
-    return {"sender_bitrate_bytes_per_second"  : sender_bitrate,
-            "receiver_bitrate_bytes_per_second": receiver_bitrate,
-            "receiver_proportion_of_losses": receiver_proportion_of_losses}
-
-
-
-
-
+from testing_libraries.drawing.boxcharts import *
+from testing_libraries.util.conversion import *
+from testing_libraries.bashterminal.commands import *
 
 # -------------------
 # Option 1 - original 
 
-# MTUs = [100, 200, 400, 500, 750, 800, 900, 1000, 
+# MTUs = [500, 750, 800, 900, 1000, 
 #         1100, 1200, 1300, 1400, 1500, 1600, 1750, 1800, 1900, 
 #         2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
-# MTUs = [8000, 9000]
+MTUs = [6000, 8000]
 
-# sender_bitrates   = []
-# receiver_bitrates = []
-# receiver_losses   = []
+localhost_measurements = perform_group_of_perf3_measurements(MTUs, "10.2.2.101", False)
+MTUs = localhost_measurements["valid_MTUs"]
+sender_bitrates = localhost_measurements["sender_bitrates"]
+receiver_bitrates = localhost_measurements["receiver_bitrates"]
+receiver_losses = localhost_measurements["receiver_losses"]
 
-# for MTU in MTUs:
-#     measurement_result = perform_perf3_measurement(MTU)
-#     sender_bitrates.append(measurement_result["sender_bitrate_bytes_per_second"])
-#     receiver_bitrates.append(measurement_result["receiver_bitrate_bytes_per_second"])
-#     receiver_losses.append(measurement_result["receiver_proportion_of_losses"])
-
-# measurements_A = sender_bitrates
-# measurements_B = receiver_bitrates
-# measurements_C = receiver_losses
+measurements_A = sender_bitrates
+measurements_B = receiver_bitrates
+measurements_C = receiver_losses
 
 # -------------------
 # Option 2 - old short (localhost)
@@ -121,38 +53,13 @@ print(measurements_A)
 print(measurements_B)
 print(measurements_C)
 
-fig, ax = plt.subplots()
-ax.plot(MTUs_kB, measurements_A, label='Sender bitrate')
-ax.plot(MTUs_kB, measurements_B, label='Receiver bitrate')
-ax.set(xlabel='MTUs, kilobytes' , ylabel='UDP throughput, Bytes/second')
-ax.grid()
 
-# ax_losses.plot(MTUs, measurements_C,    label='receiver_proportion_of_losses')
-# ax_losses.set(xlabel='MTUs, UNITS????', ylabel='Proportion of lost datagrams, %')
-# ax_losses.grid()
-
-
-# Chart example taken from:
-# https://matplotlib.org/stable/gallery/subplots_axes_and_figures/two_scales.html
-ax_losses = ax.twinx()
-colour = 'tab:red'
-ax_losses.set_ylabel('Proportion of lost datagrams at the receiver side, %', color=colour) 
-ax_losses.plot(MTUs_kB, measurements_C, color=colour)
-ax_losses.tick_params(axis='y', labelcolor=colour)
-fig.tight_layout()  
-
-
-
-plot_title = 'Iperf3 UDP throughput using different MTUs (A1-to-B-to-A2)'
-fig.savefig(plot_title + ".png")
-plt.title(plot_title)
-
-
-# From https://stackoverflow.com/questions/22263807/how-is-order-of-items-in-matplotlib-legend-determined
-handles, labels = ax.get_legend_handles_labels()
-labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: t[0]))
-ax.legend(handles, labels)
-
-plt.show()
-
-
+draw_line_chart_with_double_y_yxis(
+    MTUs_kB, 
+    [{  "measurements": measurements_A, "label": 'Sender bitrate'}, {  "measurements": measurements_B, "label": 'Receiver bitrate'}],
+    [{  "measurements": measurements_C, "label": 'TODO'}],
+    'MTUs, kBytes',
+    'UDP throughput, Bytes/second',
+    'Proportion of lost datagrams at the receiver side, %',
+    'Iperf3 UDP throughput using different MTUs (A1-B-A2)'
+    )

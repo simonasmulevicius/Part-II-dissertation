@@ -1,16 +1,4 @@
-import subprocess
-from io import StringIO
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-
-
-def run_command_in_terminal(parameters):
-    command_output = subprocess.run(parameters, stdout=subprocess.PIPE, text=True).stdout
-    print("command_output:")
-    print(command_output)
-    return command_output
-
+from testing_libraries.bashterminal.commands import *
 
 NGTCP2_RELATIVE_LOCATION = "../../../ngtcp2/"
 
