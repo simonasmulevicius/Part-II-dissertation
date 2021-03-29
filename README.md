@@ -26,7 +26,7 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
 
     git clone --depth 1 -b OpenSSL_1_1_1g-quic-draft-33 https://github.com/tatsuhiro-t/openssl
     cd openssl
-    ./config enable-tls1_3 --prefix=$PWD/build CXXFLAGS="-g,-fno-omit-frame-pointer"
+    ./config enable-tls1_3 --prefix=$PWD/build CXXFLAGS="-g -fno-omit-frame-pointer"
     make -j$(nproc)
     make install_sw
     cd ..  
@@ -34,7 +34,7 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
     git clone https://github.com/ngtcp2/nghttp3
     cd nghttp3
     autoreconf -i
-    ./configure --prefix=$PWD/build --enable-lib-only CXXFLAGS="-g,-fno-omit-frame-pointer"
+    ./configure --prefix=$PWD/build --enable-lib-only CXXFLAGS="-g -fno-omit-frame-pointer"
     make -j$(nproc) check
     make install
     cd ..  
@@ -42,7 +42,7 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
     git clone https://github.com/ngtcp2/ngtcp2
     cd ngtcp2
     autoreconf -i
-    ./configure --prefix=$PWD/build PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib" CXXFLAGS="-g,-fno-omit-frame-pointer"
+    ./configure --prefix=$PWD/build PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib" CXXFLAGS="-g -fno-omit-frame-pointer"
     make -j$(nproc) check
     make install
     cd ..  
@@ -56,6 +56,6 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
     autoreconf -i
     automake
     autoconf
-    ./configure PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig:$PWD/../ngtcp2/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib" CXXFLAGS="-g,-fno-omit-frame-pointer"
+    ./configure PKG_CONFIG_PATH=$PWD/../openssl/build/lib/pkgconfig:$PWD/../nghttp3/build/lib/pkgconfig:$PWD/../ngtcp2/build/lib/pkgconfig LDFLAGS="-Wl,-rpath,$PWD/../openssl/build/lib" CXXFLAGS="-g -fno-omit-frame-pointer"
     make
     ```
