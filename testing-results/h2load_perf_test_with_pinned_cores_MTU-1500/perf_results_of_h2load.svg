@@ -1,0 +1,2660 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="822" onload="init(evt)" viewBox="0 0 1200 822" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0">
+		<stop stop-color="#eeeeee" offset="5%"/>
+		<stop stop-color="#eeeeb0" offset="95%"/>
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames &gt; *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+	}
+
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom();
+			zoom(target);
+		}
+		else if (e.target.id == "unzoom") unzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	}, false)
+
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+		return;
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x = txt.length - 2; x > 0; x--) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom() {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+		search();
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) {
+				currentSearchTerm = term;
+				search();
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (currentSearchTerm === null) return;
+		var term = currentSearchTerm;
+
+		var re = new RegExp(term, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="822.0" fill="url(#background)"/>
+<text id="title" x="600.00" y="24">Flame Graph</text>
+<text id="details" x="10.00" y="805"> </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" class="show">Reset Search</text>
+<text id="ignorecase" x="1174.00" y="24">ic</text>
+<text id="matched" x="1090.00" y="805">Matched: 73.7%</text>
+<g id="frames">
+<g>
+<title>vpaes_encrypt (738 samples, 35.93%)</title><rect x="667.8" y="565" width="424.0" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(245,139,52)"/>
+<text x="670.8" y="575.5">vpaes_encrypt </text>
+</g>
+<g class="">
+<title>conn_writev_stream (1 samples, 0.05%)</title><rect x="1148.6" y="677" width="0.6" height="15.0" fill="rgb(246,51,3)" rx="2" ry="2"/>
+<text x="1151.6" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_map_find (9 samples, 0.44%)</title><rect x="216.2" y="629" width="5.2" height="15.0" fill="rgb(252,166,52)" rx="2" ry="2"/>
+<text x="219.2" y="639.5"/>
+</g>
+<g class="">
+<title>EVP_CipherInit_ex (1 samples, 0.05%)</title><rect x="1152.7" y="613" width="0.5" height="15.0" fill="rgb(225,148,38)" rx="2" ry="2"/>
+<text x="1155.7" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_lower_bound_compar (3 samples, 0.15%)</title><rect x="20.9" y="725" width="1.7" height="15.0" fill="rgb(235,229,23)" rx="2" ry="2"/>
+<text x="23.9" y="735.5"/>
+</g>
+<g class="">
+<title>udp_rmem_release (1 samples, 0.05%)</title><rect x="80.7" y="533" width="0.5" height="15.0" fill="rgb(247,121,19)" rx="2" ry="2"/>
+<text x="83.7" y="543.5"/>
+</g>
+<g class="">
+<title>EVP_EncryptUpdate (32 samples, 1.56%)</title><rect x="253.0" y="613" width="18.4" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(251,121,15)"/>
+<text x="256" y="623.5"/>
+</g>
+<g class="">
+<title>std::call_once&lt;void  (12 samples, 0.58%)</title><rect x="1158.4" y="517" width="6.9" height="15.0" fill="rgb(253,115,7)" rx="2" ry="2"/>
+<text x="1161.4" y="527.5"/>
+</g>
+<g>
+<title>timerqueue_del (1 samples, 0.05%)</title><rect x="1085.4" y="453" width="0.6" height="15.0" fill="rgb(207,203,8)" rx="2" ry="2"/>
+<text x="1088.4" y="463.5"/>
+</g>
+<g class="">
+<title>[libstdc++.so.6.0.28] (12 samples, 0.58%)</title><rect x="1158.4" y="709" width="6.9" height="15.0" fill="rgb(244,143,44)" rx="2" ry="2"/>
+<text x="1161.4" y="719.5"/>
+</g>
+<g class="">
+<title>__GI___clone (12 samples, 0.58%)</title><rect x="1158.4" y="741" width="6.9" height="15.0" fill="rgb(235,3,26)" rx="2" ry="2"/>
+<text x="1161.4" y="751.5"/>
+</g>
+<g>
+<title>ngtcp2_crypto_decrypt (1,418 samples, 69.04%)</title><rect x="278.3" y="629" width="814.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(252,27,38)"/>
+<text x="281.3" y="639.5">ngtcp2_crypto_decrypt </text>
+</g>
+<g class="">
+<title>is_partially_overlapping (1 samples, 0.05%)</title><rect x="270.8" y="597" width="0.6" height="15.0" fill="rgb(249,20,31)" rx="2" ry="2"/>
+<text x="273.8" y="607.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_on_data (37 samples, 1.80%)</title><rect x="180.6" y="533" width="21.3" height="15.0" fill="rgb(251,170,48)" rx="2" ry="2"/>
+<text x="183.6" y="543.5"/>
+</g>
+<g class="">
+<title>security_socket_recvmsg (2 samples, 0.10%)</title><rect x="127.2" y="613" width="1.1" height="15.0" fill="rgb(205,141,30)" rx="2" ry="2"/>
+<text x="130.2" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_create_nonce (1 samples, 0.05%)</title><rect x="19.8" y="725" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(228,53,8)"/>
+<text x="22.8" y="735.5"/>
+</g>
+<g>
+<title>gcm_ghash_4bit (555 samples, 27.02%)</title><rect x="348.9" y="565" width="318.9" height="15.0" fill="rgb(228,224,20)" rx="2" ry="2"/>
+<text x="351.9" y="575.5">gcm_ghash_4bit </text>
+</g>
+<g class="">
+<title>ngtcp2_cpymem (7 samples, 0.34%)</title><rect x="1104.4" y="645" width="4.0" height="15.0" fill="rgb(240,11,5)" rx="2" ry="2"/>
+<text x="1107.4" y="655.5"/>
+</g>
+<g class="">
+<title>import_single_range (1 samples, 0.05%)</title><rect x="133.5" y="645" width="0.6" height="15.0" fill="rgb(223,58,8)" rx="2" ry="2"/>
+<text x="136.5" y="655.5"/>
+</g>
+<g class="">
+<title>native_apic_mem_write (1 samples, 0.05%)</title><rect x="1186.0" y="549" width="0.6" height="15.0" fill="rgb(212,65,11)" rx="2" ry="2"/>
+<text x="1189" y="559.5"/>
+</g>
+<g class="">
+<title>nghttp3_read_varint (1 samples, 0.05%)</title><rect x="203.0" y="549" width="0.6" height="15.0" fill="rgb(244,103,48)" rx="2" ry="2"/>
+<text x="206" y="559.5"/>
+</g>
+<g class="">
+<title>flush_smp_call_function_queue (4 samples, 0.19%)</title><rect x="1179.1" y="581" width="2.3" height="15.0" fill="rgb(244,137,17)" rx="2" ry="2"/>
+<text x="1182.1" y="591.5"/>
+</g>
+<g class="">
+<title>EVP_CIPHER_CTX_iv_length (2 samples, 0.10%)</title><rect x="247.8" y="597" width="1.2" height="15.0" fill="rgb(250,174,31)" rx="2" ry="2"/>
+<text x="250.8" y="607.5"/>
+</g>
+<g class="">
+<title>vpaes_encrypt (13 samples, 0.63%)</title><rect x="262.2" y="565" width="7.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(234,156,43)"/>
+<text x="265.2" y="575.5"/>
+</g>
+<g class="">
+<title>[h2load] (2 samples, 0.10%)</title><rect x="43.3" y="709" width="1.2" height="15.0" fill="rgb(247,159,28)" rx="2" ry="2"/>
+<text x="46.3" y="719.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_decode_hd_short (10 samples, 0.49%)</title><rect x="1102.7" y="661" width="5.7" height="15.0" fill="rgb(249,175,33)" rx="2" ry="2"/>
+<text x="1105.7" y="671.5"/>
+</g>
+<g class="">
+<title>std::function&lt;int  (1 samples, 0.05%)</title><rect x="1164.1" y="229" width="0.6" height="15.0" fill="rgb(211,78,9)" rx="2" ry="2"/>
+<text x="1167.1" y="239.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_create_nonce (1 samples, 0.05%)</title><rect x="1155.0" y="725" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(223,94,20)"/>
+<text x="1158" y="735.5"/>
+</g>
+<g class="">
+<title>__consume_stateless_skb (19 samples, 0.93%)</title><rect x="116.3" y="565" width="10.9" height="15.0" fill="rgb(225,6,39)" rx="2" ry="2"/>
+<text x="119.3" y="575.5"/>
+</g>
+<g class="">
+<title>__memcmp_sse4_1 (12 samples, 0.58%)</title><rect x="232.3" y="597" width="6.9" height="15.0" fill="rgb(205,69,19)" rx="2" ry="2"/>
+<text x="235.3" y="607.5"/>
+</g>
+<g class="">
+<title>std::__invoke_impl&lt;void, void  (12 samples, 0.58%)</title><rect x="1158.4" y="469" width="6.9" height="15.0" fill="rgb(239,140,3)" rx="2" ry="2"/>
+<text x="1161.4" y="479.5"/>
+</g>
+<g class="">
+<title>hrtimer_cancel (1 samples, 0.05%)</title><rect x="1188.9" y="645" width="0.5" height="15.0" fill="rgb(237,54,13)" rx="2" ry="2"/>
+<text x="1191.9" y="655.5"/>
+</g>
+<g class="">
+<title>call_cpuidle (1 samples, 0.05%)</title><rect x="1178.5" y="693" width="0.6" height="15.0" fill="rgb(214,145,24)" rx="2" ry="2"/>
+<text x="1181.5" y="703.5"/>
+</g>
+<g class="">
+<title>CRYPTO_gcm128_decrypt (2 samples, 0.10%)</title><rect x="11.1" y="725" width="1.2" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(246,220,15)"/>
+<text x="14.1" y="735.5"/>
+</g>
+<g class="">
+<title>_dl_sysdep_start (1 samples, 0.05%)</title><rect x="1165.3" y="693" width="0.6" height="15.0" fill="rgb(208,222,0)" rx="2" ry="2"/>
+<text x="1168.3" y="703.5"/>
+</g>
+<g class="">
+<title>std::__invoke&lt;int  (1 samples, 0.05%)</title><rect x="1164.1" y="197" width="0.6" height="15.0" fill="rgb(228,209,2)" rx="2" ry="2"/>
+<text x="1167.1" y="207.5"/>
+</g>
+<g class="">
+<title>_raw_spin_lock_bh (6 samples, 0.29%)</title><rect x="111.7" y="581" width="3.4" height="15.0" fill="rgb(219,141,21)" rx="2" ry="2"/>
+<text x="114.7" y="591.5"/>
+</g>
+<g class="">
+<title>udp_send_skb.isra.0 (5 samples, 0.24%)</title><rect x="1145.8" y="517" width="2.8" height="15.0" fill="rgb(231,6,1)" rx="2" ry="2"/>
+<text x="1148.8" y="527.5"/>
+</g>
+<g class="">
+<title>update_cfs_group (1 samples, 0.05%)</title><rect x="248.4" y="437" width="0.6" height="15.0" fill="rgb(220,139,47)" rx="2" ry="2"/>
+<text x="251.4" y="447.5"/>
+</g>
+<g class="">
+<title>x86_pmu_enable (4 samples, 0.19%)</title><rect x="1179.1" y="485" width="2.3" height="15.0" fill="rgb(251,36,48)" rx="2" ry="2"/>
+<text x="1182.1" y="495.5"/>
+</g>
+<g class="">
+<title>security_socket_recvmsg (1 samples, 0.05%)</title><rect x="67.4" y="629" width="0.6" height="15.0" fill="rgb(236,159,21)" rx="2" ry="2"/>
+<text x="70.4" y="639.5"/>
+</g>
+<g class="">
+<title>lock_sock_nested (1 samples, 0.05%)</title><rect x="115.7" y="581" width="0.6" height="15.0" fill="rgb(254,2,39)" rx="2" ry="2"/>
+<text x="118.7" y="591.5"/>
+</g>
+<g class="">
+<title>[libngtcp2.so.0.0.0] (1 samples, 0.05%)</title><rect x="1153.8" y="693" width="0.6" height="15.0" fill="rgb(226,69,48)" rx="2" ry="2"/>
+<text x="1156.8" y="703.5"/>
+</g>
+<g class="">
+<title>h2load::Client::read_quic (1,927 samples, 93.82%)</title><rect x="35.9" y="725" width="1107.0" height="15.0" fill="rgb(243,102,53)" rx="2" ry="2"/>
+<text x="38.9" y="735.5">h2load::Client::read_quic </text>
+</g>
+<g class="">
+<title>h2load::Http3Session::recv_data (1 samples, 0.05%)</title><rect x="1173.9" y="741" width="0.6" height="15.0" fill="rgb(213,177,1)" rx="2" ry="2"/>
+<text x="1176.9" y="751.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_hp_mask (1 samples, 0.05%)</title><rect x="1153.2" y="629" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(217,19,35)"/>
+<text x="1156.2" y="639.5"/>
+</g>
+<g class="">
+<title>all (2,054 samples, 100%)</title><rect x="10.0" y="773" width="1180.0" height="15.0" fill="rgb(241,17,49)" rx="2" ry="2"/>
+<text x="13" y="783.5">all </text>
+</g>
+<g class="">
+<title>ngtcp2_pkt_encode_ack_frame (1 samples, 0.05%)</title><rect x="1150.9" y="629" width="0.6" height="15.0" fill="rgb(212,54,38)" rx="2" ry="2"/>
+<text x="1153.9" y="639.5"/>
+</g>
+<g class="">
+<title>std::__invoke&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="357" width="6.9" height="15.0" fill="rgb(215,187,2)" rx="2" ry="2"/>
+<text x="1161.4" y="367.5"/>
+</g>
+<g class="">
+<title>kmem_cache_free (10 samples, 0.49%)</title><rect x="116.9" y="533" width="5.7" height="15.0" fill="rgb(216,181,2)" rx="2" ry="2"/>
+<text x="119.9" y="543.5"/>
+</g>
+<g class="">
+<title>h2load::Http3Session::write_stream (2 samples, 0.10%)</title><rect x="1148.6" y="709" width="1.2" height="15.0" fill="rgb(234,214,24)" rx="2" ry="2"/>
+<text x="1151.6" y="719.5"/>
+</g>
+<g class="">
+<title>std::thread::_Invoker&lt;std::tuple&lt;std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="677" width="6.9" height="15.0" fill="rgb(209,136,30)" rx="2" ry="2"/>
+<text x="1161.4" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_first_gap_offset (3 samples, 0.15%)</title><rect x="214.5" y="629" width="1.7" height="15.0" fill="rgb(254,114,43)" rx="2" ry="2"/>
+<text x="217.5" y="639.5"/>
+</g>
+<g class="">
+<title>inet_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="549" width="4.6" height="15.0" fill="rgb(212,43,22)" rx="2" ry="2"/>
+<text x="1147" y="559.5"/>
+</g>
+<g>
+<title>__remove_hrtimer (1 samples, 0.05%)</title><rect x="1085.4" y="469" width="0.6" height="15.0" fill="rgb(249,97,21)" rx="2" ry="2"/>
+<text x="1088.4" y="479.5"/>
+</g>
+<g class="">
+<title>ngtcp2_range_intersect (1 samples, 0.05%)</title><rect x="1135.4" y="629" width="0.6" height="15.0" fill="rgb(223,183,45)" rx="2" ry="2"/>
+<text x="1138.4" y="639.5"/>
+</g>
+<g>
+<title>smp_apic_timer_interrupt (1 samples, 0.05%)</title><rect x="667.2" y="533" width="0.6" height="15.0" fill="rgb(222,130,27)" rx="2" ry="2"/>
+<text x="670.2" y="543.5"/>
+</g>
+<g class="">
+<title>ngtcp2_log_rx_fr (1 samples, 0.05%)</title><rect x="1099.2" y="661" width="0.6" height="15.0" fill="rgb(222,161,22)" rx="2" ry="2"/>
+<text x="1102.2" y="671.5"/>
+</g>
+<g class="">
+<title>activate_task (1 samples, 0.05%)</title><rect x="1186.6" y="645" width="0.5" height="15.0" fill="rgb(210,68,48)" rx="2" ry="2"/>
+<text x="1189.6" y="655.5"/>
+</g>
+<g class="">
+<title>pick_next_task_fair (1 samples, 0.05%)</title><rect x="1187.7" y="645" width="0.6" height="15.0" fill="rgb(238,132,25)" rx="2" ry="2"/>
+<text x="1190.7" y="655.5"/>
+</g>
+<g>
+<title>__memset_sse2_unaligned (4 samples, 0.19%)</title><rect x="295.5" y="565" width="2.3" height="15.0" fill="rgb(224,55,53)" rx="2" ry="2"/>
+<text x="298.5" y="575.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_remove_prefix (1 samples, 0.05%)</title><rect x="1157.8" y="725" width="0.6" height="15.0" fill="rgb(210,88,28)" rx="2" ry="2"/>
+<text x="1160.8" y="735.5"/>
+</g>
+<g class="">
+<title>xfrm_lookup_with_ifid (1 samples, 0.05%)</title><rect x="1145.2" y="485" width="0.6" height="15.0" fill="rgb(232,47,3)" rx="2" ry="2"/>
+<text x="1148.2" y="495.5"/>
+</g>
+<g class="">
+<title>nghttp3_stream_uni (5 samples, 0.24%)</title><rect x="204.2" y="565" width="2.8" height="15.0" fill="rgb(250,25,9)" rx="2" ry="2"/>
+<text x="207.2" y="575.5"/>
+</g>
+<g class="">
+<title>__sys_recvfrom (131 samples, 6.38%)</title><rect x="58.3" y="645" width="75.2" height="15.0" fill="rgb(233,206,52)" rx="2" ry="2"/>
+<text x="61.3" y="655.5">__sys_rec..</text>
+</g>
+<g class="">
+<title>__virt_addr_valid (1 samples, 0.05%)</title><rect x="81.8" y="581" width="0.6" height="15.0" fill="rgb(232,75,16)" rx="2" ry="2"/>
+<text x="84.8" y="591.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64_after_hwframe (10 samples, 0.49%)</title><rect x="1142.9" y="661" width="5.7" height="15.0" fill="rgb(223,41,21)" rx="2" ry="2"/>
+<text x="1145.9" y="671.5"/>
+</g>
+<g class="">
+<title>std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="389" width="6.9" height="15.0" fill="rgb(245,144,31)" rx="2" ry="2"/>
+<text x="1161.4" y="399.5"/>
+</g>
+<g class="">
+<title>__skb_try_recv_from_queue (1 samples, 0.05%)</title><rect x="81.2" y="581" width="0.6" height="15.0" fill="rgb(234,41,54)" rx="2" ry="2"/>
+<text x="84.2" y="591.5"/>
+</g>
+<g class="">
+<title>dl_main (1 samples, 0.05%)</title><rect x="1165.3" y="677" width="0.6" height="15.0" fill="rgb(235,27,29)" rx="2" ry="2"/>
+<text x="1168.3" y="687.5"/>
+</g>
+<g class="">
+<title>prepend_path.isra.0 (1 samples, 0.05%)</title><rect x="1177.9" y="373" width="0.6" height="15.0" fill="rgb(224,149,20)" rx="2" ry="2"/>
+<text x="1180.9" y="383.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_extend_max_stream_offset (2 samples, 0.10%)</title><rect x="207.0" y="597" width="1.2" height="15.0" fill="rgb(233,144,54)" rx="2" ry="2"/>
+<text x="210" y="607.5"/>
+</g>
+<g class="">
+<title>__check_object_size (1 samples, 0.05%)</title><rect x="64.6" y="613" width="0.6" height="15.0" fill="rgb(224,162,1)" rx="2" ry="2"/>
+<text x="67.6" y="623.5"/>
+</g>
+<g class="">
+<title>conn_prepare_key_update (6 samples, 0.29%)</title><rect x="149.6" y="693" width="3.4" height="15.0" fill="rgb(205,35,38)" rx="2" ry="2"/>
+<text x="152.6" y="703.5"/>
+</g>
+<g class="">
+<title>h2load::Client::quic_recv_stream_data (1 samples, 0.05%)</title><rect x="1173.3" y="741" width="0.6" height="15.0" fill="rgb(241,181,52)" rx="2" ry="2"/>
+<text x="1176.3" y="751.5"/>
+</g>
+<g class="">
+<title>ngtcp2_path_eq (1 samples, 0.05%)</title><rect x="1141.2" y="693" width="0.5" height="15.0" fill="rgb(217,172,47)" rx="2" ry="2"/>
+<text x="1144.2" y="703.5"/>
+</g>
+<g>
+<title>aes_gcm_init_key (13 samples, 0.63%)</title><rect x="282.9" y="597" width="7.5" height="15.0" fill="rgb(237,115,13)" rx="2" ry="2"/>
+<text x="285.9" y="607.5"/>
+</g>
+<g>
+<title>__hrtimer_run_queues (2 samples, 0.10%)</title><rect x="1085.4" y="485" width="1.2" height="15.0" fill="rgb(223,169,45)" rx="2" ry="2"/>
+<text x="1088.4" y="495.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_find_stream (6 samples, 0.29%)</title><rect x="198.4" y="453" width="3.5" height="15.0" fill="rgb(231,77,19)" rx="2" ry="2"/>
+<text x="201.4" y="463.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_push (1 samples, 0.05%)</title><rect x="221.4" y="645" width="0.6" height="15.0" fill="rgb(217,89,13)" rx="2" ry="2"/>
+<text x="224.4" y="655.5"/>
+</g>
+<g class="">
+<title>h2load::Client::do_read (1 samples, 0.05%)</title><rect x="1164.1" y="245" width="0.6" height="15.0" fill="rgb(222,170,48)" rx="2" ry="2"/>
+<text x="1167.1" y="255.5"/>
+</g>
+<g class="">
+<title>std::chrono::operator!=&lt;long, std::ratio&lt;1l, 1000000000l&gt;, long, std::ratio&lt;1l, 1000000000l&gt; &gt; (7 samples, 0.34%)</title><rect x="189.2" y="453" width="4.1" height="15.0" fill="rgb(245,68,3)" rx="2" ry="2"/>
+<text x="192.2" y="463.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_begin (1 samples, 0.05%)</title><rect x="223.1" y="629" width="0.6" height="15.0" fill="rgb(249,47,54)" rx="2" ry="2"/>
+<text x="226.1" y="639.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_on_data (40 samples, 1.95%)</title><rect x="180.0" y="549" width="23.0" height="15.0" fill="rgb(208,69,21)" rx="2" ry="2"/>
+<text x="183" y="559.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_encrypt (1 samples, 0.05%)</title><rect x="1152.7" y="629" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(210,88,26)"/>
+<text x="1155.7" y="639.5"/>
+</g>
+<g class="">
+<title>conn_write_pkt (6 samples, 0.29%)</title><rect x="1150.4" y="677" width="3.4" height="15.0" fill="rgb(210,153,1)" rx="2" ry="2"/>
+<text x="1153.4" y="687.5"/>
+</g>
+<g>
+<title>EVP_CIPHER_CTX_ctrl (5 samples, 0.24%)</title><rect x="278.9" y="613" width="2.8" height="15.0" fill="rgb(245,142,19)" rx="2" ry="2"/>
+<text x="281.9" y="623.5"/>
+</g>
+<g class="">
+<title>schedule_idle (2 samples, 0.10%)</title><rect x="1187.1" y="677" width="1.2" height="15.0" fill="rgb(243,11,32)" rx="2" ry="2"/>
+<text x="1190.1" y="687.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_find_stream (6 samples, 0.29%)</title><rect x="173.2" y="565" width="3.4" height="15.0" fill="rgb(217,25,49)" rx="2" ry="2"/>
+<text x="176.2" y="575.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_extend_max_stream_offset (8 samples, 0.39%)</title><rect x="197.3" y="469" width="4.6" height="15.0" fill="rgb(213,210,5)" rx="2" ry="2"/>
+<text x="200.3" y="479.5"/>
+</g>
+<g class="">
+<title>apic_timer_interrupt (1 samples, 0.05%)</title><rect x="248.4" y="581" width="0.6" height="15.0" fill="rgb(228,181,54)" rx="2" ry="2"/>
+<text x="251.4" y="591.5"/>
+</g>
+<g class="">
+<title>decrypt_pkt (1 samples, 0.05%)</title><rect x="16.9" y="725" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(210,164,36)"/>
+<text x="19.9" y="735.5"/>
+</g>
+<g class="">
+<title>[libngtcp2.so.0.0.0] (1 samples, 0.05%)</title><rect x="30.1" y="725" width="0.6" height="15.0" fill="rgb(245,156,45)" rx="2" ry="2"/>
+<text x="33.1" y="735.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::recorded (20 samples, 0.97%)</title><rect x="184.6" y="469" width="11.5" height="15.0" fill="rgb(207,157,32)" rx="2" ry="2"/>
+<text x="187.6" y="479.5"/>
+</g>
+<g class="">
+<title>h2load::Client::do_write (1 samples, 0.05%)</title><rect x="1164.7" y="245" width="0.6" height="15.0" fill="rgb(240,42,37)" rx="2" ry="2"/>
+<text x="1167.7" y="255.5"/>
+</g>
+<g class="">
+<title>__sys_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="613" width="4.6" height="15.0" fill="rgb(242,103,27)" rx="2" ry="2"/>
+<text x="1147" y="623.5"/>
+</g>
+<g class="">
+<title>std::_Function_handler&lt;int  (1 samples, 0.05%)</title><rect x="1164.1" y="213" width="0.6" height="15.0" fill="rgb(247,43,3)" rx="2" ry="2"/>
+<text x="1167.1" y="223.5"/>
+</g>
+<g class="">
+<title>CRYPTO_gcm128_setiv (1 samples, 0.05%)</title><rect x="28.4" y="725" width="0.6" height="15.0" fill="rgb(225,129,40)" rx="2" ry="2"/>
+<text x="31.4" y="735.5"/>
+</g>
+<g class="">
+<title>ksl_bsearch (7 samples, 0.34%)</title><rect x="1120.5" y="613" width="4.0" height="15.0" fill="rgb(249,95,45)" rx="2" ry="2"/>
+<text x="1123.5" y="623.5"/>
+</g>
+<g class="">
+<title>irq_exit (1 samples, 0.05%)</title><rect x="1181.4" y="597" width="0.6" height="15.0" fill="rgb(241,7,49)" rx="2" ry="2"/>
+<text x="1184.4" y="607.5"/>
+</g>
+<g>
+<title>hrtimer_interrupt (1 samples, 0.05%)</title><rect x="667.2" y="517" width="0.6" height="15.0" fill="rgb(206,104,35)" rx="2" ry="2"/>
+<text x="670.2" y="527.5"/>
+</g>
+<g class="">
+<title>[libngtcp2.so.0.0.0] (2 samples, 0.10%)</title><rect x="27.2" y="741" width="1.2" height="15.0" fill="rgb(209,176,7)" rx="2" ry="2"/>
+<text x="30.2" y="751.5"/>
+</g>
+<g class="">
+<title>std::call_once&lt;void  (12 samples, 0.58%)</title><rect x="1158.4" y="533" width="6.9" height="15.0" fill="rgb(214,49,25)" rx="2" ry="2"/>
+<text x="1161.4" y="543.5"/>
+</g>
+<g class="">
+<title>psi_task_change (1 samples, 0.05%)</title><rect x="1176.8" y="645" width="0.6" height="15.0" fill="rgb(220,137,49)" rx="2" ry="2"/>
+<text x="1179.8" y="655.5"/>
+</g>
+<g class="">
+<title>start_secondary (20 samples, 0.97%)</title><rect x="1178.5" y="725" width="11.5" height="15.0" fill="rgb(249,148,43)" rx="2" ry="2"/>
+<text x="1181.5" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_it_get (1 samples, 0.05%)</title><rect x="215.7" y="613" width="0.5" height="15.0" fill="rgb(215,187,11)" rx="2" ry="2"/>
+<text x="218.7" y="623.5"/>
+</g>
+<g class="">
+<title>nghttp3_map_find (6 samples, 0.29%)</title><rect x="173.2" y="549" width="3.4" height="15.0" fill="rgb(240,17,4)" rx="2" ry="2"/>
+<text x="176.2" y="559.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_lower_bound_compar (7 samples, 0.34%)</title><rect x="1120.5" y="629" width="4.0" height="15.0" fill="rgb(249,121,43)" rx="2" ry="2"/>
+<text x="1123.5" y="639.5"/>
+</g>
+<g class="">
+<title>udp_recvmsg (100 samples, 4.87%)</title><rect x="69.7" y="597" width="57.5" height="15.0" fill="rgb(209,109,4)" rx="2" ry="2"/>
+<text x="72.7" y="607.5">udp_r..</text>
+</g>
+<g class="">
+<title>tick_broadcast_oneshot_control (1 samples, 0.05%)</title><rect x="1186.0" y="613" width="0.6" height="15.0" fill="rgb(226,66,45)" rx="2" ry="2"/>
+<text x="1189" y="623.5"/>
+</g>
+<g>
+<title>EVP_CIPHER_CTX_test_flags (2 samples, 0.10%)</title><rect x="317.9" y="597" width="1.2" height="15.0" fill="rgb(217,59,12)" rx="2" ry="2"/>
+<text x="320.9" y="607.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_lower_bound_compar (10 samples, 0.49%)</title><rect x="1129.7" y="629" width="5.7" height="15.0" fill="rgb(251,220,38)" rx="2" ry="2"/>
+<text x="1132.7" y="639.5"/>
+</g>
+<g class="">
+<title>ctx_resched (4 samples, 0.19%)</title><rect x="1179.1" y="517" width="2.3" height="15.0" fill="rgb(252,100,44)" rx="2" ry="2"/>
+<text x="1182.1" y="527.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_read_bidi (48 samples, 2.34%)</title><rect x="176.6" y="565" width="27.6" height="15.0" fill="rgb(250,44,6)" rx="2" ry="2"/>
+<text x="179.6" y="575.5">n..</text>
+</g>
+<g class="">
+<title>ngtcp2_ksl_update_key (1 samples, 0.05%)</title><rect x="1098.7" y="629" width="0.5" height="15.0" fill="rgb(220,171,41)" rx="2" ry="2"/>
+<text x="1101.7" y="639.5"/>
+</g>
+<g>
+<title>schedule (1 samples, 0.05%)</title><rect x="1092.9" y="597" width="0.6" height="15.0" fill="rgb(245,165,43)" rx="2" ry="2"/>
+<text x="1095.9" y="607.5"/>
+</g>
+<g class="">
+<title>openaux (1 samples, 0.05%)</title><rect x="1177.9" y="629" width="0.6" height="15.0" fill="rgb(253,84,26)" rx="2" ry="2"/>
+<text x="1180.9" y="639.5"/>
+</g>
+<g class="">
+<title>__sched_text_start (1 samples, 0.05%)</title><rect x="1176.8" y="677" width="0.6" height="15.0" fill="rgb(220,163,10)" rx="2" ry="2"/>
+<text x="1179.8" y="687.5"/>
+</g>
+<g class="">
+<title>h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="325" width="6.9" height="15.0" fill="rgb(207,193,42)" rx="2" ry="2"/>
+<text x="1161.4" y="335.5"/>
+</g>
+<g>
+<title>ngtcp2_crypto_create_nonce (7 samples, 0.34%)</title><rect x="272.5" y="645" width="4.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(247,159,51)"/>
+<text x="275.5" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_read_pkt (1,733 samples, 84.37%)</title><rect x="146.2" y="709" width="995.5" height="15.0" fill="rgb(208,224,21)" rx="2" ry="2"/>
+<text x="149.2" y="719.5">ngtcp2_conn_read_pkt </text>
+</g>
+<g>
+<title>tick_sched_handle (1 samples, 0.05%)</title><rect x="348.4" y="485" width="0.5" height="15.0" fill="rgb(249,138,45)" rx="2" ry="2"/>
+<text x="351.4" y="495.5"/>
+</g>
+<g class="">
+<title>native_write_msr (4 samples, 0.19%)</title><rect x="1179.1" y="453" width="2.3" height="15.0" fill="rgb(229,191,31)" rx="2" ry="2"/>
+<text x="1182.1" y="463.5"/>
+</g>
+<g class="">
+<title>hash (2 samples, 0.10%)</title><rect x="207.0" y="549" width="1.2" height="15.0" fill="rgb(243,73,36)" rx="2" ry="2"/>
+<text x="210" y="559.5"/>
+</g>
+<g class="">
+<title>hash (5 samples, 0.24%)</title><rect x="199.0" y="421" width="2.9" height="15.0" fill="rgb(254,71,17)" rx="2" ry="2"/>
+<text x="202" y="431.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_extend_max_stream_offset (1 samples, 0.05%)</title><rect x="1173.3" y="725" width="0.6" height="15.0" fill="rgb(206,81,27)" rx="2" ry="2"/>
+<text x="1176.3" y="735.5"/>
+</g>
+<g class="">
+<title>std::chrono::operator==&lt;long, std::ratio&lt;1l, 1000000000l&gt;, long, std::ratio&lt;1l, 1000000000l&gt; &gt; (5 samples, 0.24%)</title><rect x="190.4" y="437" width="2.9" height="15.0" fill="rgb(240,142,1)" rx="2" ry="2"/>
+<text x="193.4" y="447.5"/>
+</g>
+<g class="">
+<title>do_syscall_64 (138 samples, 6.72%)</title><rect x="54.8" y="677" width="79.3" height="15.0" fill="rgb(230,27,28)" rx="2" ry="2"/>
+<text x="57.8" y="687.5">do_syscall..</text>
+</g>
+<g>
+<title>ktime_get_update_offsets_now (1 samples, 0.05%)</title><rect x="667.2" y="501" width="0.6" height="15.0" fill="rgb(213,34,49)" rx="2" ry="2"/>
+<text x="670.2" y="511.5"/>
+</g>
+<g class="">
+<title>sched_ttwu_pending (1 samples, 0.05%)</title><rect x="1186.6" y="677" width="0.5" height="15.0" fill="rgb(205,112,26)" rx="2" ry="2"/>
+<text x="1189.6" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_qlog_pkt_received_start (1 samples, 0.05%)</title><rect x="1113.6" y="661" width="0.6" height="15.0" fill="rgb(230,210,43)" rx="2" ry="2"/>
+<text x="1116.6" y="671.5"/>
+</g>
+<g class="">
+<title>conn_call_recv_stream_data (76 samples, 3.70%)</title><rect x="169.7" y="645" width="43.7" height="15.0" fill="rgb(238,113,32)" rx="2" ry="2"/>
+<text x="172.7" y="655.5">con..</text>
+</g>
+<g class="">
+<title>ngtcp2_addr_eq (3 samples, 0.15%)</title><rect x="1137.7" y="661" width="1.7" height="15.0" fill="rgb(225,99,38)" rx="2" ry="2"/>
+<text x="1140.7" y="671.5"/>
+</g>
+<g class="">
+<title>key_equal (1 samples, 0.05%)</title><rect x="1156.1" y="709" width="0.6" height="15.0" fill="rgb(235,80,51)" rx="2" ry="2"/>
+<text x="1159.1" y="719.5"/>
+</g>
+<g class="">
+<title>__dev_queue_xmit (3 samples, 0.15%)</title><rect x="1145.8" y="389" width="1.7" height="15.0" fill="rgb(213,124,0)" rx="2" ry="2"/>
+<text x="1148.8" y="399.5"/>
+</g>
+<g class="">
+<title>std::__invoke&lt;int  (1 samples, 0.05%)</title><rect x="1164.7" y="197" width="0.6" height="15.0" fill="rgb(215,26,40)" rx="2" ry="2"/>
+<text x="1167.7" y="207.5"/>
+</g>
+<g class="">
+<title>_dl_map_object_deps (1 samples, 0.05%)</title><rect x="1177.9" y="661" width="0.6" height="15.0" fill="rgb(227,166,10)" rx="2" ry="2"/>
+<text x="1180.9" y="671.5"/>
+</g>
+<g class="">
+<title>hash (1 samples, 0.05%)</title><rect x="176.0" y="533" width="0.6" height="15.0" fill="rgb(216,74,43)" rx="2" ry="2"/>
+<text x="179" y="543.5"/>
+</g>
+<g class="">
+<title>enqueue_task_fair (1 samples, 0.05%)</title><rect x="1186.6" y="629" width="0.5" height="15.0" fill="rgb(213,212,7)" rx="2" ry="2"/>
+<text x="1189.6" y="639.5"/>
+</g>
+<g class="">
+<title>std::__invoke&lt;std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="645" width="6.9" height="15.0" fill="rgb(230,139,43)" rx="2" ry="2"/>
+<text x="1161.4" y="655.5"/>
+</g>
+<g>
+<title>task_tick_fair (1 samples, 0.05%)</title><rect x="1086.0" y="405" width="0.6" height="15.0" fill="rgb(210,129,49)" rx="2" ry="2"/>
+<text x="1089" y="415.5"/>
+</g>
+<g class="">
+<title>ngtcp2_acktr_add (1 samples, 0.05%)</title><rect x="19.2" y="725" width="0.6" height="15.0" fill="rgb(247,116,23)" rx="2" ry="2"/>
+<text x="22.2" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_gaptr_push (1 samples, 0.05%)</title><rect x="20.3" y="725" width="0.6" height="15.0" fill="rgb(234,81,41)" rx="2" ry="2"/>
+<text x="23.3" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_range_compar (1 samples, 0.05%)</title><rect x="1126.2" y="597" width="0.6" height="15.0" fill="rgb(233,132,41)" rx="2" ry="2"/>
+<text x="1129.2" y="607.5"/>
+</g>
+<g>
+<title>aes_gcm_ctrl (4 samples, 0.19%)</title><rect x="279.4" y="597" width="2.3" height="15.0" fill="rgb(213,136,41)" rx="2" ry="2"/>
+<text x="282.4" y="607.5"/>
+</g>
+<g class="">
+<title>__fdget (8 samples, 0.39%)</title><rect x="128.3" y="613" width="4.6" height="15.0" fill="rgb(216,10,34)" rx="2" ry="2"/>
+<text x="131.3" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_decode_frame (3 samples, 0.15%)</title><rect x="1101.0" y="661" width="1.7" height="15.0" fill="rgb(212,3,4)" rx="2" ry="2"/>
+<text x="1104" y="671.5"/>
+</g>
+<g class="">
+<title>tick_sched_handle (1 samples, 0.05%)</title><rect x="78.4" y="485" width="0.5" height="15.0" fill="rgb(223,51,44)" rx="2" ry="2"/>
+<text x="81.4" y="495.5"/>
+</g>
+<g class="">
+<title>___sys_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="597" width="4.6" height="15.0" fill="rgb(251,156,1)" rx="2" ry="2"/>
+<text x="1147" y="607.5"/>
+</g>
+<g class="">
+<title>EVP_EncryptInit_ex (2 samples, 0.10%)</title><rect x="251.9" y="613" width="1.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(237,143,37)"/>
+<text x="254.9" y="623.5"/>
+</g>
+<g class="">
+<title>[anon] (26 samples, 1.27%)</title><rect x="10.0" y="741" width="14.9" height="15.0" fill="rgb(240,62,3)" rx="2" ry="2"/>
+<text x="13" y="751.5"/>
+</g>
+<g class="">
+<title>ksl_bsearch (18 samples, 0.88%)</title><rect x="228.9" y="629" width="10.3" height="15.0" fill="rgb(251,17,40)" rx="2" ry="2"/>
+<text x="231.9" y="639.5"/>
+</g>
+<g class="">
+<title>ngtcp2_log_info (1 samples, 0.05%)</title><rect x="1156.7" y="725" width="0.6" height="15.0" fill="rgb(214,143,19)" rx="2" ry="2"/>
+<text x="1159.7" y="735.5"/>
+</g>
+<g class="">
+<title>[unknown] (1,967 samples, 95.76%)</title><rect x="28.4" y="741" width="1130.0" height="15.0" fill="rgb(210,183,14)" rx="2" ry="2"/>
+<text x="31.4" y="751.5">[unknown] </text>
+</g>
+<g class="">
+<title>tick_program_event (1 samples, 0.05%)</title><rect x="1186.0" y="581" width="0.6" height="15.0" fill="rgb(215,12,26)" rx="2" ry="2"/>
+<text x="1189" y="591.5"/>
+</g>
+<g class="">
+<title>alloc_skb_with_frags (1 samples, 0.05%)</title><rect x="1144.6" y="453" width="0.6" height="15.0" fill="rgb(238,147,40)" rx="2" ry="2"/>
+<text x="1147.6" y="463.5"/>
+</g>
+<g>
+<title>prepare_exit_to_usermode (1 samples, 0.05%)</title><rect x="1092.9" y="629" width="0.6" height="15.0" fill="rgb(206,104,2)" rx="2" ry="2"/>
+<text x="1095.9" y="639.5"/>
+</g>
+<g class="">
+<title>ngtcp2_qlog_write_frame (1 samples, 0.05%)</title><rect x="1114.2" y="661" width="0.5" height="15.0" fill="rgb(205,115,15)" rx="2" ry="2"/>
+<text x="1117.2" y="671.5"/>
+</g>
+<g class="">
+<title>std::unique_ptr&lt;h2load::Session, std::default_delete&lt;h2load::Session&gt; &gt;::get (9 samples, 0.44%)</title><rect x="208.2" y="597" width="5.2" height="15.0" fill="rgb(224,109,47)" rx="2" ry="2"/>
+<text x="211.2" y="607.5"/>
+</g>
+<g class="">
+<title>intel_pmu_nhm_enable_all (4 samples, 0.19%)</title><rect x="1179.1" y="469" width="2.3" height="15.0" fill="rgb(221,2,54)" rx="2" ry="2"/>
+<text x="1182.1" y="479.5"/>
+</g>
+<g>
+<title>gcm_ghash_4bit (18 samples, 0.88%)</title><rect x="299.0" y="565" width="10.3" height="15.0" fill="rgb(248,29,31)" rx="2" ry="2"/>
+<text x="302" y="575.5"/>
+</g>
+<g class="">
+<title>h2load::Client::write_udp (10 samples, 0.49%)</title><rect x="1142.9" y="709" width="5.7" height="15.0" fill="rgb(224,118,19)" rx="2" ry="2"/>
+<text x="1145.9" y="719.5"/>
+</g>
+<g class="">
+<title>ngtcp2_log_info (3 samples, 0.15%)</title><rect x="1139.4" y="693" width="1.8" height="15.0" fill="rgb(246,92,13)" rx="2" ry="2"/>
+<text x="1142.4" y="703.5"/>
+</g>
+<g>
+<title>_vpaes_encrypt_core (696 samples, 33.89%)</title><rect x="686.7" y="549" width="399.9" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(237,95,20)"/>
+<text x="689.7" y="559.5">_vpaes_encrypt_core </text>
+</g>
+<g class="">
+<title>__x64_sys_mmap (1 samples, 0.05%)</title><rect x="1177.9" y="501" width="0.6" height="15.0" fill="rgb(244,56,18)" rx="2" ry="2"/>
+<text x="1180.9" y="511.5"/>
+</g>
+<g class="">
+<title>sock_recvmsg (105 samples, 5.11%)</title><rect x="68.0" y="629" width="60.3" height="15.0" fill="rgb(218,203,32)" rx="2" ry="2"/>
+<text x="71" y="639.5">sock_r..</text>
+</g>
+<g class="">
+<title>apparmor_socket_recvmsg (2 samples, 0.10%)</title><rect x="127.2" y="597" width="1.1" height="15.0" fill="rgb(226,139,46)" rx="2" ry="2"/>
+<text x="130.2" y="607.5"/>
+</g>
+<g class="">
+<title>[libngtcp2_crypto_openssl.so.0.0.0] (2 samples, 0.10%)</title><rect x="30.7" y="725" width="1.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(217,46,49)"/>
+<text x="33.7" y="735.5"/>
+</g>
+<g class="">
+<title>apparmor_socket_recvmsg (2 samples, 0.10%)</title><rect x="68.0" y="613" width="1.2" height="15.0" fill="rgb(226,186,31)" rx="2" ry="2"/>
+<text x="71" y="623.5"/>
+</g>
+<g class="">
+<title>__virt_addr_valid (5 samples, 0.24%)</title><rect x="75.5" y="565" width="2.9" height="15.0" fill="rgb(207,175,39)" rx="2" ry="2"/>
+<text x="78.5" y="575.5"/>
+</g>
+<g class="">
+<title>schedule (3 samples, 0.15%)</title><rect x="1161.3" y="133" width="1.7" height="15.0" fill="rgb(249,106,24)" rx="2" ry="2"/>
+<text x="1164.3" y="143.5"/>
+</g>
+<g class="">
+<title>sch_direct_xmit (2 samples, 0.10%)</title><rect x="1146.3" y="373" width="1.2" height="15.0" fill="rgb(205,138,21)" rx="2" ry="2"/>
+<text x="1149.3" y="383.5"/>
+</g>
+<g class="">
+<title>__memcpy_sse2_unaligned_erms (1 samples, 0.05%)</title><rect x="241.5" y="613" width="0.6" height="15.0" fill="rgb(245,122,52)" rx="2" ry="2"/>
+<text x="244.5" y="623.5"/>
+</g>
+<g class="">
+<title>__sys_recvfrom (2 samples, 0.10%)</title><rect x="57.1" y="661" width="1.2" height="15.0" fill="rgb(237,125,54)" rx="2" ry="2"/>
+<text x="60.1" y="671.5"/>
+</g>
+<g class="">
+<title>h2load (2,031 samples, 98.88%)</title><rect x="10.0" y="757" width="1166.8" height="15.0" fill="rgb(211,13,30)" rx="2" ry="2"/>
+<text x="13" y="767.5">h2load </text>
+</g>
+<g class="">
+<title>hash (6 samples, 0.29%)</title><rect x="218.0" y="613" width="3.4" height="15.0" fill="rgb(247,188,14)" rx="2" ry="2"/>
+<text x="221" y="623.5"/>
+</g>
+<g class="">
+<title>__memcpy_sse2_unaligned (4 samples, 0.19%)</title><rect x="249.0" y="597" width="2.3" height="15.0" fill="rgb(213,185,11)" rx="2" ry="2"/>
+<text x="252" y="607.5"/>
+</g>
+<g>
+<title>CRYPTO_gcm128_aad (1 samples, 0.05%)</title><rect x="320.2" y="581" width="0.6" height="15.0" fill="rgb(218,143,45)" rx="2" ry="2"/>
+<text x="323.2" y="591.5"/>
+</g>
+<g>
+<title>swapgs_restore_regs_and_return_to_usermode (1 samples, 0.05%)</title><rect x="1092.9" y="645" width="0.6" height="15.0" fill="rgb(211,31,8)" rx="2" ry="2"/>
+<text x="1095.9" y="655.5"/>
+</g>
+<g class="">
+<title>[libcrypto.so.1.1] (1 samples, 0.05%)</title><rect x="29.5" y="725" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(219,91,23)"/>
+<text x="32.5" y="735.5"/>
+</g>
+<g class="">
+<title>ep_poll (4 samples, 0.19%)</title><rect x="1160.7" y="181" width="2.3" height="15.0" fill="rgb(213,39,39)" rx="2" ry="2"/>
+<text x="1163.7" y="191.5"/>
+</g>
+<g class="">
+<title>_start (1 samples, 0.05%)</title><rect x="1165.3" y="741" width="0.6" height="15.0" fill="rgb(220,198,19)" rx="2" ry="2"/>
+<text x="1168.3" y="751.5"/>
+</g>
+<g class="">
+<title>EVP_DecryptFinal_ex (1 samples, 0.05%)</title><rect x="12.3" y="725" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(249,93,50)"/>
+<text x="15.3" y="735.5"/>
+</g>
+<g class="">
+<title>std::__invoke&lt;void  (12 samples, 0.58%)</title><rect x="1158.4" y="485" width="6.9" height="15.0" fill="rgb(241,179,39)" rx="2" ry="2"/>
+<text x="1161.4" y="495.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_range_exclusive_compar (2 samples, 0.10%)</title><rect x="1134.3" y="597" width="1.1" height="15.0" fill="rgb(239,107,12)" rx="2" ry="2"/>
+<text x="1137.3" y="607.5"/>
+</g>
+<g class="">
+<title>xfrm_lookup_route (1 samples, 0.05%)</title><rect x="1145.2" y="501" width="0.6" height="15.0" fill="rgb(226,126,33)" rx="2" ry="2"/>
+<text x="1148.2" y="511.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_find_stream (2 samples, 0.10%)</title><rect x="207.0" y="581" width="1.2" height="15.0" fill="rgb(206,218,39)" rx="2" ry="2"/>
+<text x="210" y="591.5"/>
+</g>
+<g class="">
+<title>ip_make_skb (1 samples, 0.05%)</title><rect x="1144.6" y="517" width="0.6" height="15.0" fill="rgb(216,131,54)" rx="2" ry="2"/>
+<text x="1147.6" y="527.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_find_stream (9 samples, 0.44%)</title><rect x="216.2" y="645" width="5.2" height="15.0" fill="rgb(231,174,22)" rx="2" ry="2"/>
+<text x="219.2" y="655.5"/>
+</g>
+<g class="">
+<title>account_entity_enqueue (1 samples, 0.05%)</title><rect x="1186.6" y="613" width="0.5" height="15.0" fill="rgb(242,90,49)" rx="2" ry="2"/>
+<text x="1189.6" y="623.5"/>
+</g>
+<g>
+<title>CRYPTO_gcm128_setiv (9 samples, 0.44%)</title><rect x="285.2" y="581" width="5.2" height="15.0" fill="rgb(212,202,53)" rx="2" ry="2"/>
+<text x="288.2" y="591.5"/>
+</g>
+<g class="">
+<title>conn_emit_pending_stream_data (5 samples, 0.24%)</title><rect x="213.4" y="645" width="2.8" height="15.0" fill="rgb(239,87,3)" rx="2" ry="2"/>
+<text x="216.4" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_verify_reserved_bits (1 samples, 0.05%)</title><rect x="1113.0" y="661" width="0.6" height="15.0" fill="rgb(214,0,10)" rx="2" ry="2"/>
+<text x="1116" y="671.5"/>
+</g>
+<g>
+<title>apic_timer_interrupt (2 samples, 0.10%)</title><rect x="1085.4" y="533" width="1.2" height="15.0" fill="rgb(223,125,50)" rx="2" ry="2"/>
+<text x="1088.4" y="543.5"/>
+</g>
+<g class="">
+<title>std::_Head_base&lt;0ul, h2load::Session*, false&gt;::_M_head (1 samples, 0.05%)</title><rect x="23.2" y="725" width="0.6" height="15.0" fill="rgb(241,88,16)" rx="2" ry="2"/>
+<text x="26.2" y="735.5"/>
+</g>
+<g class="">
+<title>std::call_once&lt;void  (12 samples, 0.58%)</title><rect x="1158.4" y="501" width="6.9" height="15.0" fill="rgb(228,219,44)" rx="2" ry="2"/>
+<text x="1161.4" y="511.5"/>
+</g>
+<g class="">
+<title>conn_recv_pkt (6 samples, 0.29%)</title><rect x="32.4" y="725" width="3.5" height="15.0" fill="rgb(207,99,1)" rx="2" ry="2"/>
+<text x="35.4" y="735.5"/>
+</g>
+<g class="">
+<title>conn_ensure_decrypt_hp_buffer (4 samples, 0.19%)</title><rect x="162.2" y="661" width="2.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(223,61,8)"/>
+<text x="165.2" y="671.5"/>
+</g>
+<g class="">
+<title>conn_ppe_write_frame_hd_log (1 samples, 0.05%)</title><rect x="1150.9" y="661" width="0.6" height="15.0" fill="rgb(245,52,30)" rx="2" ry="2"/>
+<text x="1153.9" y="671.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64 (7 samples, 0.34%)</title><rect x="50.2" y="693" width="4.0" height="15.0" fill="rgb(247,227,54)" rx="2" ry="2"/>
+<text x="53.2" y="703.5"/>
+</g>
+<g class="">
+<title>_dl_start (1 samples, 0.05%)</title><rect x="1177.9" y="725" width="0.6" height="15.0" fill="rgb(219,101,52)" rx="2" ry="2"/>
+<text x="1180.9" y="735.5"/>
+</g>
+<g class="">
+<title>pktns_pkt_num_is_duplicate (16 samples, 0.78%)</title><rect x="1126.8" y="661" width="9.2" height="15.0" fill="rgb(241,103,16)" rx="2" ry="2"/>
+<text x="1129.8" y="671.5"/>
+</g>
+<g class="">
+<title>hrtimer_try_to_cancel (1 samples, 0.05%)</title><rect x="1188.9" y="629" width="0.5" height="15.0" fill="rgb(227,81,0)" rx="2" ry="2"/>
+<text x="1191.9" y="639.5"/>
+</g>
+<g class="">
+<title>aa_sk_perm (2 samples, 0.10%)</title><rect x="127.2" y="581" width="1.1" height="15.0" fill="rgb(237,141,4)" rx="2" ry="2"/>
+<text x="130.2" y="591.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_lower_bound (18 samples, 0.88%)</title><rect x="228.9" y="645" width="10.3" height="15.0" fill="rgb(219,156,37)" rx="2" ry="2"/>
+<text x="231.9" y="655.5"/>
+</g>
+<g class="">
+<title>_copy_to_user (2 samples, 0.10%)</title><rect x="61.7" y="629" width="1.2" height="15.0" fill="rgb(215,128,49)" rx="2" ry="2"/>
+<text x="64.7" y="639.5"/>
+</g>
+<g class="">
+<title>__libc_sendmsg (10 samples, 0.49%)</title><rect x="1142.9" y="693" width="5.7" height="15.0" fill="rgb(233,197,34)" rx="2" ry="2"/>
+<text x="1145.9" y="703.5"/>
+</g>
+<g class="">
+<title>page_frag_free (5 samples, 0.24%)</title><rect x="124.3" y="533" width="2.9" height="15.0" fill="rgb(218,172,41)" rx="2" ry="2"/>
+<text x="127.3" y="543.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_range_exclusive_compar (4 samples, 0.19%)</title><rect x="1122.2" y="597" width="2.3" height="15.0" fill="rgb(229,49,14)" rx="2" ry="2"/>
+<text x="1125.2" y="607.5"/>
+</g>
+<g class="">
+<title>[libcrypto.so.1.1] (4 samples, 0.19%)</title><rect x="24.9" y="741" width="2.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(210,183,29)"/>
+<text x="27.9" y="751.5"/>
+</g>
+<g class="">
+<title>__skb_recv_udp (3 samples, 0.15%)</title><rect x="79.5" y="581" width="1.7" height="15.0" fill="rgb(206,129,10)" rx="2" ry="2"/>
+<text x="82.5" y="591.5"/>
+</g>
+<g>
+<title>EVP_DecryptUpdate (1,360 samples, 66.21%)</title><rect x="311.0" y="613" width="781.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(224,169,48)"/>
+<text x="314" y="623.5">EVP_DecryptUpdate </text>
+</g>
+<g class="">
+<title>__x64_sys_recvfrom (1 samples, 0.05%)</title><rect x="54.2" y="677" width="0.6" height="15.0" fill="rgb(234,32,4)" rx="2" ry="2"/>
+<text x="57.2" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_first_gap_offset (2 samples, 0.10%)</title><rect x="1175.1" y="741" width="1.1" height="15.0" fill="rgb(237,87,29)" rx="2" ry="2"/>
+<text x="1178.1" y="751.5"/>
+</g>
+<g class="">
+<title>key_equal (1 samples, 0.05%)</title><rect x="223.7" y="597" width="0.6" height="15.0" fill="rgb(239,112,14)" rx="2" ry="2"/>
+<text x="226.7" y="607.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_update_key (1 samples, 0.05%)</title><rect x="1156.1" y="725" width="0.6" height="15.0" fill="rgb(230,26,17)" rx="2" ry="2"/>
+<text x="1159.1" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ppe_encode_frame (1 samples, 0.05%)</title><rect x="1150.9" y="645" width="0.6" height="15.0" fill="rgb(221,142,31)" rx="2" ry="2"/>
+<text x="1153.9" y="655.5"/>
+</g>
+<g class="">
+<title>aes_ctr_cipher (1 samples, 0.05%)</title><rect x="31.8" y="725" width="0.6" height="15.0" fill="rgb(229,10,3)" rx="2" ry="2"/>
+<text x="34.8" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_gaptr_push (18 samples, 0.88%)</title><rect x="1116.5" y="645" width="10.3" height="15.0" fill="rgb(233,189,52)" rx="2" ry="2"/>
+<text x="1119.5" y="655.5"/>
+</g>
+<g class="">
+<title>qlog_pkt_write_start (1 samples, 0.05%)</title><rect x="1113.6" y="645" width="0.6" height="15.0" fill="rgb(232,111,38)" rx="2" ry="2"/>
+<text x="1116.6" y="655.5"/>
+</g>
+<g class="">
+<title>inet_recvmsg (101 samples, 4.92%)</title><rect x="69.2" y="613" width="58.0" height="15.0" fill="rgb(229,56,5)" rx="2" ry="2"/>
+<text x="72.2" y="623.5">inet_r..</text>
+</g>
+<g class="">
+<title>conn_extend_max_stream_offset (1 samples, 0.05%)</title><rect x="197.9" y="453" width="0.5" height="15.0" fill="rgb(232,203,2)" rx="2" ry="2"/>
+<text x="200.9" y="463.5"/>
+</g>
+<g class="">
+<title>ip_finish_output (5 samples, 0.24%)</title><rect x="1145.8" y="453" width="2.8" height="15.0" fill="rgb(246,5,4)" rx="2" ry="2"/>
+<text x="1148.8" y="463.5"/>
+</g>
+<g class="">
+<title>__fget (8 samples, 0.39%)</title><rect x="128.3" y="581" width="4.6" height="15.0" fill="rgb(229,206,15)" rx="2" ry="2"/>
+<text x="131.3" y="591.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_decode_hd_short (1 samples, 0.05%)</title><rect x="1157.3" y="725" width="0.5" height="15.0" fill="rgb(223,120,17)" rx="2" ry="2"/>
+<text x="1160.3" y="735.5"/>
+</g>
+<g class="">
+<title>tick_sched_handle (1 samples, 0.05%)</title><rect x="248.4" y="501" width="0.6" height="15.0" fill="rgb(247,46,15)" rx="2" ry="2"/>
+<text x="251.4" y="511.5"/>
+</g>
+<g class="">
+<title>dl_main (1 samples, 0.05%)</title><rect x="1177.9" y="677" width="0.6" height="15.0" fill="rgb(252,24,16)" rx="2" ry="2"/>
+<text x="1180.9" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_update_key (1 samples, 0.05%)</title><rect x="223.7" y="629" width="0.6" height="15.0" fill="rgb(233,31,48)" rx="2" ry="2"/>
+<text x="226.7" y="639.5"/>
+</g>
+<g class="">
+<title>fq_codel_dequeue (1 samples, 0.05%)</title><rect x="1148.1" y="357" width="0.5" height="15.0" fill="rgb(246,43,42)" rx="2" ry="2"/>
+<text x="1151.1" y="367.5"/>
+</g>
+<g>
+<title>decrypt_pkt (1,431 samples, 69.67%)</title><rect x="271.4" y="661" width="822.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(229,23,41)"/>
+<text x="274.4" y="671.5">decrypt_pkt </text>
+</g>
+<g class="">
+<title>__check_object_size (8 samples, 0.39%)</title><rect x="74.3" y="581" width="4.6" height="15.0" fill="rgb(240,159,54)" rx="2" ry="2"/>
+<text x="77.3" y="591.5"/>
+</g>
+<g class="">
+<title>ngtcp2_get_varint (1 samples, 0.05%)</title><rect x="1112.4" y="645" width="0.6" height="15.0" fill="rgb(253,202,28)" rx="2" ry="2"/>
+<text x="1115.4" y="655.5"/>
+</g>
+<g class="">
+<title>decrypt_hp (6 samples, 0.29%)</title><rect x="13.4" y="725" width="3.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(236,35,46)"/>
+<text x="16.4" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_update_key (1 samples, 0.05%)</title><rect x="22.6" y="725" width="0.6" height="15.0" fill="rgb(221,37,10)" rx="2" ry="2"/>
+<text x="25.6" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_acktr_add (7 samples, 0.34%)</title><rect x="1095.2" y="645" width="4.0" height="15.0" fill="rgb(210,94,34)" rx="2" ry="2"/>
+<text x="1098.2" y="655.5"/>
+</g>
+<g class="">
+<title>ret_from_fork (1 samples, 0.05%)</title><rect x="1176.8" y="741" width="0.6" height="15.0" fill="rgb(205,144,17)" rx="2" ry="2"/>
+<text x="1179.8" y="751.5"/>
+</g>
+<g class="">
+<title>elf_dynamic_do_Rela (1 samples, 0.05%)</title><rect x="1165.3" y="645" width="0.6" height="15.0" fill="rgb(205,37,10)" rx="2" ry="2"/>
+<text x="1168.3" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_path_eq (4 samples, 0.19%)</title><rect x="1137.1" y="677" width="2.3" height="15.0" fill="rgb(241,66,28)" rx="2" ry="2"/>
+<text x="1140.1" y="687.5"/>
+</g>
+<g class="">
+<title>qlog_pkt_write_end (1 samples, 0.05%)</title><rect x="1136.0" y="661" width="0.6" height="15.0" fill="rgb(212,197,19)" rx="2" ry="2"/>
+<text x="1139" y="671.5"/>
+</g>
+<g>
+<title>scheduler_tick (1 samples, 0.05%)</title><rect x="1086.0" y="421" width="0.6" height="15.0" fill="rgb(251,181,39)" rx="2" ry="2"/>
+<text x="1089" y="431.5"/>
+</g>
+<g class="">
+<title>ip_send_skb (5 samples, 0.24%)</title><rect x="1145.8" y="501" width="2.8" height="15.0" fill="rgb(235,86,36)" rx="2" ry="2"/>
+<text x="1148.8" y="511.5"/>
+</g>
+<g class="">
+<title>__kmalloc_reserve.isra.0 (1 samples, 0.05%)</title><rect x="1144.6" y="421" width="0.6" height="15.0" fill="rgb(226,124,7)" rx="2" ry="2"/>
+<text x="1147.6" y="431.5"/>
+</g>
+<g class="">
+<title>__alloc_skb (1 samples, 0.05%)</title><rect x="1144.6" y="437" width="0.6" height="15.0" fill="rgb(214,32,44)" rx="2" ry="2"/>
+<text x="1147.6" y="447.5"/>
+</g>
+<g class="">
+<title>ev_run (12 samples, 0.58%)</title><rect x="1158.4" y="293" width="6.9" height="15.0" fill="rgb(205,112,22)" rx="2" ry="2"/>
+<text x="1161.4" y="303.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_remove_prefix (4 samples, 0.19%)</title><rect x="222.0" y="645" width="2.3" height="15.0" fill="rgb(233,192,45)" rx="2" ry="2"/>
+<text x="225" y="655.5"/>
+</g>
+<g class="">
+<title>memcpy (2 samples, 0.10%)</title><rect x="1107.3" y="629" width="1.1" height="15.0" fill="rgb(208,72,40)" rx="2" ry="2"/>
+<text x="1110.3" y="639.5"/>
+</g>
+<g>
+<title>EVP_CIPHER_nid (1 samples, 0.05%)</title><rect x="1092.3" y="597" width="0.6" height="15.0" fill="rgb(228,45,31)" rx="2" ry="2"/>
+<text x="1095.3" y="607.5"/>
+</g>
+<g class="">
+<title>schedule_hrtimeout_range_clock (3 samples, 0.15%)</title><rect x="1161.3" y="149" width="1.7" height="15.0" fill="rgb(238,86,14)" rx="2" ry="2"/>
+<text x="1164.3" y="159.5"/>
+</g>
+<g class="">
+<title>conn_verify_dcid (25 samples, 1.22%)</title><rect x="224.9" y="661" width="14.3" height="15.0" fill="rgb(241,173,39)" rx="2" ry="2"/>
+<text x="227.9" y="671.5"/>
+</g>
+<g class="">
+<title>_dl_sysdep_start (1 samples, 0.05%)</title><rect x="1177.9" y="693" width="0.6" height="15.0" fill="rgb(205,66,6)" rx="2" ry="2"/>
+<text x="1180.9" y="703.5"/>
+</g>
+<g class="">
+<title>skb_release_data (8 samples, 0.39%)</title><rect x="122.6" y="549" width="4.6" height="15.0" fill="rgb(223,217,31)" rx="2" ry="2"/>
+<text x="125.6" y="559.5"/>
+</g>
+<g class="">
+<title>std::__uniq_ptr_impl&lt;h2load::Session, std::default_delete&lt;h2load::Session&gt; &gt;::_M_ptr (4 samples, 0.19%)</title><rect x="211.1" y="581" width="2.3" height="15.0" fill="rgb(235,139,5)" rx="2" ry="2"/>
+<text x="214.1" y="591.5"/>
+</g>
+<g class="">
+<title>worker_thread (1 samples, 0.05%)</title><rect x="1176.8" y="709" width="0.6" height="15.0" fill="rgb(211,206,53)" rx="2" ry="2"/>
+<text x="1179.8" y="719.5"/>
+</g>
+<g class="">
+<title>cpuidle_enter (13 samples, 0.63%)</title><rect x="1179.1" y="661" width="7.5" height="15.0" fill="rgb(253,118,7)" rx="2" ry="2"/>
+<text x="1182.1" y="671.5"/>
+</g>
+<g class="">
+<title>h2load::Client::write_quic (1 samples, 0.05%)</title><rect x="1164.7" y="165" width="0.6" height="15.0" fill="rgb(241,49,21)" rx="2" ry="2"/>
+<text x="1167.7" y="175.5"/>
+</g>
+<g>
+<title>CRYPTO_gcm128_decrypt (1,342 samples, 65.34%)</title><rect x="320.8" y="581" width="771.0" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(240,189,0)"/>
+<text x="323.8" y="591.5">CRYPTO_gcm128_decrypt </text>
+</g>
+<g class="">
+<title>ngtcp2_crypto_encrypt_cb (1 samples, 0.05%)</title><rect x="1152.7" y="645" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(219,140,51)"/>
+<text x="1155.7" y="655.5"/>
+</g>
+<g>
+<title>__hrtimer_run_queues (1 samples, 0.05%)</title><rect x="348.4" y="517" width="0.5" height="15.0" fill="rgb(217,1,52)" rx="2" ry="2"/>
+<text x="351.4" y="527.5"/>
+</g>
+<g class="">
+<title>__sched_text_start (2 samples, 0.10%)</title><rect x="1161.9" y="117" width="1.1" height="15.0" fill="rgb(217,121,46)" rx="2" ry="2"/>
+<text x="1164.9" y="127.5"/>
+</g>
+<g class="">
+<title>__x64_sys_recvfrom (132 samples, 6.43%)</title><rect x="58.3" y="661" width="75.8" height="15.0" fill="rgb(249,175,2)" rx="2" ry="2"/>
+<text x="61.3" y="671.5">__x64_sys..</text>
+</g>
+<g class="">
+<title>pick_next_entity (1 samples, 0.05%)</title><rect x="1187.7" y="629" width="0.6" height="15.0" fill="rgb(209,227,42)" rx="2" ry="2"/>
+<text x="1190.7" y="639.5"/>
+</g>
+<g class="">
+<title>sed (1 samples, 0.05%)</title><rect x="1177.9" y="757" width="0.6" height="15.0" fill="rgb(240,133,23)" rx="2" ry="2"/>
+<text x="1180.9" y="767.5"/>
+</g>
+<g class="">
+<title>std::function&lt;std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;  (12 samples, 0.58%)</title><rect x="1158.4" y="437" width="6.9" height="15.0" fill="rgb(245,85,48)" rx="2" ry="2"/>
+<text x="1161.4" y="447.5"/>
+</g>
+<g class="">
+<title>ngtcp2_cid_eq (2 samples, 0.10%)</title><rect x="227.7" y="645" width="1.2" height="15.0" fill="rgb(225,65,2)" rx="2" ry="2"/>
+<text x="230.7" y="655.5"/>
+</g>
+<g class="">
+<title>__consume_stateless_skb (1 samples, 0.05%)</title><rect x="78.9" y="581" width="0.6" height="15.0" fill="rgb(207,172,47)" rx="2" ry="2"/>
+<text x="81.9" y="591.5"/>
+</g>
+<g class="">
+<title>std::get&lt;0ul, h2load::Session*, std::default_delete&lt;h2load::Session&gt; &gt; (1 samples, 0.05%)</title><rect x="1176.2" y="725" width="0.6" height="15.0" fill="rgb(228,133,35)" rx="2" ry="2"/>
+<text x="1179.2" y="735.5"/>
+</g>
+<g class="">
+<title>__ip_finish_output (5 samples, 0.24%)</title><rect x="1145.8" y="437" width="2.8" height="15.0" fill="rgb(206,33,7)" rx="2" ry="2"/>
+<text x="1148.8" y="447.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_extend_max_offset (1 samples, 0.05%)</title><rect x="196.7" y="469" width="0.6" height="15.0" fill="rgb(228,32,53)" rx="2" ry="2"/>
+<text x="199.7" y="479.5"/>
+</g>
+<g class="">
+<title>std::__invoke_impl&lt;int, int  (1 samples, 0.05%)</title><rect x="1164.7" y="181" width="0.6" height="15.0" fill="rgb(247,161,23)" rx="2" ry="2"/>
+<text x="1167.7" y="191.5"/>
+</g>
+<g class="">
+<title>do_syscall_64 (1 samples, 0.05%)</title><rect x="1177.9" y="517" width="0.6" height="15.0" fill="rgb(210,16,16)" rx="2" ry="2"/>
+<text x="1180.9" y="527.5"/>
+</g>
+<g class="">
+<title>check_stack_object (2 samples, 0.10%)</title><rect x="65.2" y="613" width="1.1" height="15.0" fill="rgb(214,43,51)" rx="2" ry="2"/>
+<text x="68.2" y="623.5"/>
+</g>
+<g class="">
+<title>conn_recv_cpkt (1,717 samples, 83.59%)</title><rect x="153.0" y="693" width="986.4" height="15.0" fill="rgb(238,134,2)" rx="2" ry="2"/>
+<text x="156" y="703.5">conn_recv_cpkt </text>
+</g>
+<g>
+<title>CRYPTO_gcm128_finish (29 samples, 1.41%)</title><rect x="292.6" y="581" width="16.7" height="15.0" fill="rgb(249,208,9)" rx="2" ry="2"/>
+<text x="295.6" y="591.5"/>
+</g>
+<g class="">
+<title>__sk_mem_reduce_allocated (1 samples, 0.05%)</title><rect x="80.7" y="517" width="0.5" height="15.0" fill="rgb(248,133,54)" rx="2" ry="2"/>
+<text x="83.7" y="527.5"/>
+</g>
+<g class="">
+<title>event_function (4 samples, 0.19%)</title><rect x="1179.1" y="549" width="2.3" height="15.0" fill="rgb(224,214,7)" rx="2" ry="2"/>
+<text x="1182.1" y="559.5"/>
+</g>
+<g class="">
+<title>neigh_resolve_output (2 samples, 0.10%)</title><rect x="1147.5" y="405" width="1.1" height="15.0" fill="rgb(245,16,15)" rx="2" ry="2"/>
+<text x="1150.5" y="415.5"/>
+</g>
+<g class="">
+<title>ngtcp2_cpymem (2 samples, 0.10%)</title><rect x="240.9" y="645" width="1.2" height="15.0" fill="rgb(210,29,23)" rx="2" ry="2"/>
+<text x="243.9" y="655.5"/>
+</g>
+<g class="">
+<title>__ip_append_data.isra.0 (1 samples, 0.05%)</title><rect x="1144.6" y="501" width="0.6" height="15.0" fill="rgb(239,104,29)" rx="2" ry="2"/>
+<text x="1147.6" y="511.5"/>
+</g>
+<g class="">
+<title>__fget_light (8 samples, 0.39%)</title><rect x="128.3" y="597" width="4.6" height="15.0" fill="rgb(206,20,6)" rx="2" ry="2"/>
+<text x="131.3" y="607.5"/>
+</g>
+<g class="">
+<title>move_addr_to_user (7 samples, 0.34%)</title><rect x="63.4" y="629" width="4.0" height="15.0" fill="rgb(212,83,53)" rx="2" ry="2"/>
+<text x="66.4" y="639.5"/>
+</g>
+<g class="">
+<title>__gthread_once (12 samples, 0.58%)</title><rect x="1158.4" y="565" width="6.9" height="15.0" fill="rgb(235,134,47)" rx="2" ry="2"/>
+<text x="1161.4" y="575.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ppe_final (2 samples, 0.10%)</title><rect x="1152.7" y="661" width="1.1" height="15.0" fill="rgb(220,173,19)" rx="2" ry="2"/>
+<text x="1155.7" y="671.5"/>
+</g>
+<g class="">
+<title>ksl_bsearch (1 samples, 0.05%)</title><rect x="1098.7" y="613" width="0.5" height="15.0" fill="rgb(240,95,38)" rx="2" ry="2"/>
+<text x="1101.7" y="623.5"/>
+</g>
+<g class="">
+<title>__qdisc_run (1 samples, 0.05%)</title><rect x="1147.5" y="357" width="0.6" height="15.0" fill="rgb(221,65,8)" rx="2" ry="2"/>
+<text x="1150.5" y="367.5"/>
+</g>
+<g>
+<title>update_load_avg (1 samples, 0.05%)</title><rect x="1086.0" y="389" width="0.6" height="15.0" fill="rgb(209,68,7)" rx="2" ry="2"/>
+<text x="1089" y="399.5"/>
+</g>
+<g>
+<title>apic_timer_interrupt (1 samples, 0.05%)</title><rect x="667.2" y="549" width="0.6" height="15.0" fill="rgb(217,188,24)" rx="2" ry="2"/>
+<text x="670.2" y="559.5"/>
+</g>
+<g class="">
+<title>key_equal (1 samples, 0.05%)</title><rect x="223.7" y="613" width="0.6" height="15.0" fill="rgb(225,133,18)" rx="2" ry="2"/>
+<text x="226.7" y="623.5"/>
+</g>
+<g class="">
+<title>fput_many (1 samples, 0.05%)</title><rect x="62.9" y="629" width="0.5" height="15.0" fill="rgb(234,193,44)" rx="2" ry="2"/>
+<text x="65.9" y="639.5"/>
+</g>
+<g class="">
+<title>do_mmap (1 samples, 0.05%)</title><rect x="1177.9" y="453" width="0.6" height="15.0" fill="rgb(238,34,41)" rx="2" ry="2"/>
+<text x="1180.9" y="463.5"/>
+</g>
+<g class="">
+<title>_raw_spin_lock_irqsave (1 samples, 0.05%)</title><rect x="1188.9" y="597" width="0.5" height="15.0" fill="rgb(251,203,44)" rx="2" ry="2"/>
+<text x="1191.9" y="607.5"/>
+</g>
+<g class="">
+<title>conn_key_phase_changed (1 samples, 0.05%)</title><rect x="164.5" y="661" width="0.6" height="15.0" fill="rgb(252,217,14)" rx="2" ry="2"/>
+<text x="167.5" y="671.5"/>
+</g>
+<g class="">
+<title>EVP_EncryptFinal_ex (1 samples, 0.05%)</title><rect x="29.0" y="725" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(212,164,54)"/>
+<text x="32" y="735.5"/>
+</g>
+<g class="">
+<title>std::unique_ptr&lt;h2load::Session, std::default_delete&lt;h2load::Session&gt; &gt;::get (2 samples, 0.10%)</title><rect x="23.8" y="725" width="1.1" height="15.0" fill="rgb(245,43,4)" rx="2" ry="2"/>
+<text x="26.8" y="735.5"/>
+</g>
+<g class="">
+<title>perf_pmu_enable.part.0 (4 samples, 0.19%)</title><rect x="1179.1" y="501" width="2.3" height="15.0" fill="rgb(217,220,39)" rx="2" ry="2"/>
+<text x="1182.1" y="511.5"/>
+</g>
+<g class="">
+<title>h2load::Http3Session::recv_data (36 samples, 1.75%)</title><rect x="181.2" y="501" width="20.7" height="15.0" fill="rgb(221,206,0)" rx="2" ry="2"/>
+<text x="184.2" y="511.5"/>
+</g>
+<g class="">
+<title>conn_recv_pkt (1,712 samples, 83.35%)</title><rect x="153.0" y="677" width="983.6" height="15.0" fill="rgb(250,77,2)" rx="2" ry="2"/>
+<text x="156" y="687.5">conn_recv_pkt </text>
+</g>
+<g class="">
+<title>skb_consume_udp (19 samples, 0.93%)</title><rect x="116.3" y="581" width="10.9" height="15.0" fill="rgb(251,204,2)" rx="2" ry="2"/>
+<text x="119.3" y="591.5"/>
+</g>
+<g>
+<title>crypto_aead_max_overhead (1 samples, 0.05%)</title><rect x="1092.3" y="613" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(210,125,41)"/>
+<text x="1095.3" y="623.5"/>
+</g>
+<g>
+<title>__memset_sse2_unaligned_erms (2 samples, 0.10%)</title><rect x="297.8" y="565" width="1.2" height="15.0" fill="rgb(236,192,42)" rx="2" ry="2"/>
+<text x="300.8" y="575.5"/>
+</g>
+<g class="">
+<title>ngtcp2_log_info (1 samples, 0.05%)</title><rect x="1136.6" y="677" width="0.5" height="15.0" fill="rgb(232,121,20)" rx="2" ry="2"/>
+<text x="1139.6" y="687.5"/>
+</g>
+<g class="">
+<title>__tick_nohz_idle_restart_tick (1 samples, 0.05%)</title><rect x="1188.9" y="661" width="0.5" height="15.0" fill="rgb(214,13,47)" rx="2" ry="2"/>
+<text x="1191.9" y="671.5"/>
+</g>
+<g class="">
+<title>std::__get_helper&lt;0ul, h2load::Session*, std::default_delete&lt;h2load::Session&gt; &gt; (3 samples, 0.15%)</title><rect x="211.6" y="549" width="1.8" height="15.0" fill="rgb(245,185,26)" rx="2" ry="2"/>
+<text x="214.6" y="559.5"/>
+</g>
+<g class="">
+<title>ksys_mmap_pgoff (1 samples, 0.05%)</title><rect x="1177.9" y="485" width="0.6" height="15.0" fill="rgb(251,202,54)" rx="2" ry="2"/>
+<text x="1180.9" y="495.5"/>
+</g>
+<g class="">
+<title>check_stack_object (1 samples, 0.05%)</title><rect x="115.1" y="581" width="0.6" height="15.0" fill="rgb(229,51,12)" rx="2" ry="2"/>
+<text x="118.1" y="591.5"/>
+</g>
+<g class="">
+<title>decrypt_hp (56 samples, 2.73%)</title><rect x="239.2" y="661" width="32.2" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(230,69,10)"/>
+<text x="242.2" y="671.5">de..</text>
+</g>
+<g class="">
+<title>memcpy (1 samples, 0.05%)</title><rect x="241.5" y="629" width="0.6" height="15.0" fill="rgb(240,41,0)" rx="2" ry="2"/>
+<text x="244.5" y="639.5"/>
+</g>
+<g class="">
+<title>__sched_text_start (2 samples, 0.10%)</title><rect x="1187.1" y="661" width="1.2" height="15.0" fill="rgb(230,100,54)" rx="2" ry="2"/>
+<text x="1190.1" y="671.5"/>
+</g>
+<g class="">
+<title>ksl_bsearch (4 samples, 0.19%)</title><rect x="1124.5" y="613" width="2.3" height="15.0" fill="rgb(253,133,20)" rx="2" ry="2"/>
+<text x="1127.5" y="623.5"/>
+</g>
+<g class="">
+<title>_dl_map_object_from_fd (1 samples, 0.05%)</title><rect x="1177.9" y="597" width="0.6" height="15.0" fill="rgb(210,196,6)" rx="2" ry="2"/>
+<text x="1180.9" y="607.5"/>
+</g>
+<g>
+<title>aes_gcm_cipher (31 samples, 1.51%)</title><rect x="292.6" y="597" width="17.9" height="15.0" fill="rgb(225,12,45)" rx="2" ry="2"/>
+<text x="295.6" y="607.5"/>
+</g>
+<g class="">
+<title>do_epoll_wait (4 samples, 0.19%)</title><rect x="1160.7" y="197" width="2.3" height="15.0" fill="rgb(252,81,35)" rx="2" ry="2"/>
+<text x="1163.7" y="207.5"/>
+</g>
+<g class="">
+<title>pktns_commit_recv_pkt_num (21 samples, 1.02%)</title><rect x="1114.7" y="661" width="12.1" height="15.0" fill="rgb(226,165,47)" rx="2" ry="2"/>
+<text x="1117.7" y="671.5"/>
+</g>
+<g class="">
+<title>dequeue_entity (1 samples, 0.05%)</title><rect x="1162.4" y="69" width="0.6" height="15.0" fill="rgb(212,100,53)" rx="2" ry="2"/>
+<text x="1165.4" y="79.5"/>
+</g>
+<g class="">
+<title>conn_ensure_decrypt_buffer (1 samples, 0.05%)</title><rect x="161.7" y="661" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(238,125,5)"/>
+<text x="164.7" y="671.5"/>
+</g>
+<g>
+<title>EVP_CipherInit_ex (15 samples, 0.73%)</title><rect x="281.7" y="613" width="8.7" height="15.0" fill="rgb(215,56,49)" rx="2" ry="2"/>
+<text x="284.7" y="623.5"/>
+</g>
+<g class="">
+<title>syscall_return_via_sysret (2 samples, 0.10%)</title><rect x="134.1" y="693" width="1.1" height="15.0" fill="rgb(229,181,48)" rx="2" ry="2"/>
+<text x="137.1" y="703.5"/>
+</g>
+<g class="">
+<title>smp_apic_timer_interrupt (1 samples, 0.05%)</title><rect x="78.4" y="549" width="0.5" height="15.0" fill="rgb(220,192,19)" rx="2" ry="2"/>
+<text x="81.4" y="559.5"/>
+</g>
+<g class="">
+<title>swapper (20 samples, 0.97%)</title><rect x="1178.5" y="757" width="11.5" height="15.0" fill="rgb(238,73,17)" rx="2" ry="2"/>
+<text x="1181.5" y="767.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::writecb (1 samples, 0.05%)</title><rect x="1164.7" y="261" width="0.6" height="15.0" fill="rgb(229,209,8)" rx="2" ry="2"/>
+<text x="1167.7" y="271.5"/>
+</g>
+<g class="">
+<title>ip_route_output_flow (1 samples, 0.05%)</title><rect x="1145.2" y="517" width="0.6" height="15.0" fill="rgb(229,18,11)" rx="2" ry="2"/>
+<text x="1148.2" y="527.5"/>
+</g>
+<g class="">
+<title>hrtimer_interrupt (1 samples, 0.05%)</title><rect x="78.4" y="533" width="0.5" height="15.0" fill="rgb(244,183,12)" rx="2" ry="2"/>
+<text x="81.4" y="543.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.05%)</title><rect x="1177.9" y="533" width="0.6" height="15.0" fill="rgb(237,131,54)" rx="2" ry="2"/>
+<text x="1180.9" y="543.5"/>
+</g>
+<g class="">
+<title>tick_nohz_idle_exit (1 samples, 0.05%)</title><rect x="1188.9" y="677" width="0.5" height="15.0" fill="rgb(239,144,5)" rx="2" ry="2"/>
+<text x="1191.9" y="687.5"/>
+</g>
+<g class="">
+<title>ttwu_do_activate (1 samples, 0.05%)</title><rect x="1186.6" y="661" width="0.5" height="15.0" fill="rgb(217,16,51)" rx="2" ry="2"/>
+<text x="1189.6" y="671.5"/>
+</g>
+<g class="">
+<title>hrtimer_interrupt (1 samples, 0.05%)</title><rect x="248.4" y="549" width="0.6" height="15.0" fill="rgb(228,1,31)" rx="2" ry="2"/>
+<text x="251.4" y="559.5"/>
+</g>
+<g class="">
+<title>__memcpy_sse2_unaligned (1 samples, 0.05%)</title><rect x="1119.9" y="629" width="0.6" height="15.0" fill="rgb(205,14,32)" rx="2" ry="2"/>
+<text x="1122.9" y="639.5"/>
+</g>
+<g class="">
+<title>cpuidle_enter_state (13 samples, 0.63%)</title><rect x="1179.1" y="645" width="7.5" height="15.0" fill="rgb(232,75,36)" rx="2" ry="2"/>
+<text x="1182.1" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_hp_mask (48 samples, 2.34%)</title><rect x="243.8" y="629" width="27.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(222,43,9)"/>
+<text x="246.8" y="639.5">n..</text>
+</g>
+<g class="">
+<title>std::chrono::time_point&lt;std::chrono::_V2::steady_clock, std::chrono::duration&lt;long, std::ratio&lt;1l, 1000000000l&gt; &gt; &gt;::time_since_epoch (5 samples, 0.24%)</title><rect x="193.3" y="453" width="2.8" height="15.0" fill="rgb(212,117,17)" rx="2" ry="2"/>
+<text x="196.3" y="463.5"/>
+</g>
+<g class="">
+<title>lock_hrtimer_base (1 samples, 0.05%)</title><rect x="1188.9" y="613" width="0.5" height="15.0" fill="rgb(249,119,22)" rx="2" ry="2"/>
+<text x="1191.9" y="623.5"/>
+</g>
+<g class="">
+<title>aes_gcm_init_key (1 samples, 0.05%)</title><rect x="12.9" y="725" width="0.5" height="15.0" fill="rgb(221,110,32)" rx="2" ry="2"/>
+<text x="15.9" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_it_get (2 samples, 0.10%)</title><rect x="213.4" y="613" width="1.1" height="15.0" fill="rgb(231,140,45)" rx="2" ry="2"/>
+<text x="216.4" y="623.5"/>
+</g>
+<g class="">
+<title>tick_sched_timer (1 samples, 0.05%)</title><rect x="248.4" y="517" width="0.6" height="15.0" fill="rgb(240,185,44)" rx="2" ry="2"/>
+<text x="251.4" y="527.5"/>
+</g>
+<g class="">
+<title>__x64_sys_epoll_wait (4 samples, 0.19%)</title><rect x="1160.7" y="213" width="2.3" height="15.0" fill="rgb(241,76,52)" rx="2" ry="2"/>
+<text x="1163.7" y="223.5"/>
+</g>
+<g class="">
+<title>copy_user_generic_string (47 samples, 2.29%)</title><rect x="84.7" y="565" width="27.0" height="15.0" fill="rgb(222,126,25)" rx="2" ry="2"/>
+<text x="87.7" y="575.5">c..</text>
+</g>
+<g class="">
+<title>vm_mmap_pgoff (1 samples, 0.05%)</title><rect x="1177.9" y="469" width="0.6" height="15.0" fill="rgb(223,89,36)" rx="2" ry="2"/>
+<text x="1180.9" y="479.5"/>
+</g>
+<g class="">
+<title>_dl_lookup_symbol_x (1 samples, 0.05%)</title><rect x="1165.3" y="613" width="0.6" height="15.0" fill="rgb(208,131,27)" rx="2" ry="2"/>
+<text x="1168.3" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_strm_is_tx_queued (1 samples, 0.05%)</title><rect x="197.9" y="437" width="0.5" height="15.0" fill="rgb(238,122,33)" rx="2" ry="2"/>
+<text x="200.9" y="447.5"/>
+</g>
+<g>
+<title>tick_sched_timer (1 samples, 0.05%)</title><rect x="348.4" y="501" width="0.5" height="15.0" fill="rgb(236,134,52)" rx="2" ry="2"/>
+<text x="351.4" y="511.5"/>
+</g>
+<g class="">
+<title>__pthread_disable_asynccancel (1 samples, 0.05%)</title><rect x="47.9" y="693" width="0.6" height="15.0" fill="rgb(206,213,54)" rx="2" ry="2"/>
+<text x="50.9" y="703.5"/>
+</g>
+<g class="">
+<title>account_system_time (1 samples, 0.05%)</title><rect x="78.4" y="437" width="0.5" height="15.0" fill="rgb(250,82,11)" rx="2" ry="2"/>
+<text x="81.4" y="447.5"/>
+</g>
+<g class="">
+<title>aes_ctr_cipher (27 samples, 1.31%)</title><rect x="255.3" y="597" width="15.5" height="15.0" fill="rgb(229,102,7)" rx="2" ry="2"/>
+<text x="258.3" y="607.5"/>
+</g>
+<g class="">
+<title>sock_alloc_send_skb (1 samples, 0.05%)</title><rect x="1144.6" y="485" width="0.6" height="15.0" fill="rgb(249,66,39)" rx="2" ry="2"/>
+<text x="1147.6" y="495.5"/>
+</g>
+<g class="">
+<title>conn_prepare_key_update (1 samples, 0.05%)</title><rect x="1165.9" y="741" width="0.5" height="15.0" fill="rgb(225,123,24)" rx="2" ry="2"/>
+<text x="1168.9" y="751.5"/>
+</g>
+<g class="">
+<title>std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="613" width="6.9" height="15.0" fill="rgb(240,109,10)" rx="2" ry="2"/>
+<text x="1161.4" y="623.5"/>
+</g>
+<g class="">
+<title>__memcpy_sse2_unaligned_erms (1 samples, 0.05%)</title><rect x="221.4" y="597" width="0.6" height="15.0" fill="rgb(209,134,31)" rx="2" ry="2"/>
+<text x="224.4" y="607.5"/>
+</g>
+<g class="">
+<title>__libc_disable_asynccancel (1 samples, 0.05%)</title><rect x="1160.1" y="245" width="0.6" height="15.0" fill="rgb(238,26,53)" rx="2" ry="2"/>
+<text x="1163.1" y="255.5"/>
+</g>
+<g class="">
+<title>ngtcp2_gaptr_is_pushed (1 samples, 0.05%)</title><rect x="1174.5" y="741" width="0.6" height="15.0" fill="rgb(234,11,45)" rx="2" ry="2"/>
+<text x="1177.5" y="751.5"/>
+</g>
+<g class="">
+<title>std::__invfwd&lt;h2load::Client&amp;, h2load::Client&amp;&gt; (1 samples, 0.05%)</title><rect x="1164.1" y="165" width="0.6" height="15.0" fill="rgb(222,213,40)" rx="2" ry="2"/>
+<text x="1167.1" y="175.5"/>
+</g>
+<g class="">
+<title>mmap_region (1 samples, 0.05%)</title><rect x="1177.9" y="437" width="0.6" height="15.0" fill="rgb(246,158,23)" rx="2" ry="2"/>
+<text x="1180.9" y="447.5"/>
+</g>
+<g>
+<title>_vpaes_preheat (9 samples, 0.44%)</title><rect x="1086.6" y="549" width="5.2" height="15.0" fill="rgb(224,31,45)" rx="2" ry="2"/>
+<text x="1089.6" y="559.5"/>
+</g>
+<g class="">
+<title>udp_send_skb.isra.0 (1 samples, 0.05%)</title><rect x="1144.0" y="533" width="0.6" height="15.0" fill="rgb(211,177,33)" rx="2" ry="2"/>
+<text x="1147" y="543.5"/>
+</g>
+<g class="">
+<title>ev_now (10 samples, 0.49%)</title><rect x="140.4" y="693" width="5.8" height="15.0" fill="rgb(235,55,41)" rx="2" ry="2"/>
+<text x="143.4" y="703.5"/>
+</g>
+<g class="">
+<title>__slab_free (5 samples, 0.24%)</title><rect x="119.7" y="517" width="2.9" height="15.0" fill="rgb(206,88,2)" rx="2" ry="2"/>
+<text x="122.7" y="527.5"/>
+</g>
+<g class="">
+<title>remote_function (4 samples, 0.19%)</title><rect x="1179.1" y="565" width="2.3" height="15.0" fill="rgb(234,20,46)" rx="2" ry="2"/>
+<text x="1182.1" y="575.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::readcb (1 samples, 0.05%)</title><rect x="1164.1" y="261" width="0.6" height="15.0" fill="rgb(205,137,45)" rx="2" ry="2"/>
+<text x="1167.1" y="271.5"/>
+</g>
+<g class="">
+<title>std::__invoke_impl&lt;void, std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="629" width="6.9" height="15.0" fill="rgb(246,107,46)" rx="2" ry="2"/>
+<text x="1161.4" y="639.5"/>
+</g>
+<g class="">
+<title>_dl_start (1 samples, 0.05%)</title><rect x="1165.3" y="725" width="0.6" height="15.0" fill="rgb(243,86,52)" rx="2" ry="2"/>
+<text x="1168.3" y="735.5"/>
+</g>
+<g class="">
+<title>____sys_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="581" width="4.6" height="15.0" fill="rgb(236,195,27)" rx="2" ry="2"/>
+<text x="1147" y="591.5"/>
+</g>
+<g class="">
+<title>ngtcp2_put_varint_len (1 samples, 0.05%)</title><rect x="1150.9" y="613" width="0.6" height="15.0" fill="rgb(236,74,20)" rx="2" ry="2"/>
+<text x="1153.9" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_vec_len (1 samples, 0.05%)</title><rect x="224.3" y="645" width="0.6" height="15.0" fill="rgb(237,160,26)" rx="2" ry="2"/>
+<text x="227.3" y="655.5"/>
+</g>
+<g class="">
+<title>EVP_CipherInit_ex (1 samples, 0.05%)</title><rect x="1153.2" y="613" width="0.6" height="15.0" fill="rgb(240,191,22)" rx="2" ry="2"/>
+<text x="1156.2" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_decrypt_cb (1 samples, 0.05%)</title><rect x="1155.5" y="725" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(223,61,43)"/>
+<text x="1158.5" y="735.5"/>
+</g>
+<g class="">
+<title>do_lookup_x (1 samples, 0.05%)</title><rect x="1165.3" y="597" width="0.6" height="15.0" fill="rgb(208,223,39)" rx="2" ry="2"/>
+<text x="1168.3" y="607.5"/>
+</g>
+<g class="">
+<title>h2load::Worker::run (12 samples, 0.58%)</title><rect x="1158.4" y="309" width="6.9" height="15.0" fill="rgb(205,211,0)" rx="2" ry="2"/>
+<text x="1161.4" y="319.5"/>
+</g>
+<g class="">
+<title>_dl_relocate_object (1 samples, 0.05%)</title><rect x="1165.3" y="661" width="0.6" height="15.0" fill="rgb(220,182,37)" rx="2" ry="2"/>
+<text x="1168.3" y="671.5"/>
+</g>
+<g class="">
+<title>__x64_sys_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="629" width="4.6" height="15.0" fill="rgb(226,125,36)" rx="2" ry="2"/>
+<text x="1147" y="639.5"/>
+</g>
+<g class="">
+<title>__fdget (1 samples, 0.05%)</title><rect x="60.6" y="629" width="0.5" height="15.0" fill="rgb(213,211,45)" rx="2" ry="2"/>
+<text x="63.6" y="639.5"/>
+</g>
+<g class="">
+<title>do_idle (18 samples, 0.88%)</title><rect x="1179.1" y="693" width="10.3" height="15.0" fill="rgb(208,9,18)" rx="2" ry="2"/>
+<text x="1182.1" y="703.5"/>
+</g>
+<g class="">
+<title>ixgbe_xmit_frame (2 samples, 0.10%)</title><rect x="1146.3" y="357" width="1.2" height="15.0" fill="rgb(217,66,49)" rx="2" ry="2"/>
+<text x="1149.3" y="367.5"/>
+</g>
+<g class="">
+<title>__pthread_enable_asynccancel (3 samples, 0.15%)</title><rect x="48.5" y="693" width="1.7" height="15.0" fill="rgb(254,28,21)" rx="2" ry="2"/>
+<text x="51.5" y="703.5"/>
+</g>
+<g class="">
+<title>check_stack_object (1 samples, 0.05%)</title><rect x="64.6" y="597" width="0.6" height="15.0" fill="rgb(211,9,16)" rx="2" ry="2"/>
+<text x="67.6" y="607.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::recv_stream_data (76 samples, 3.70%)</title><rect x="169.7" y="629" width="43.7" height="15.0" fill="rgb(206,157,3)" rx="2" ry="2"/>
+<text x="172.7" y="639.5">h2l..</text>
+</g>
+<g class="">
+<title>std::__future_base::_State_baseV2::_M_do_set (12 samples, 0.58%)</title><rect x="1158.4" y="453" width="6.9" height="15.0" fill="rgb(222,224,19)" rx="2" ry="2"/>
+<text x="1161.4" y="463.5"/>
+</g>
+<g class="">
+<title>copy_user_generic_string (2 samples, 0.10%)</title><rect x="66.3" y="613" width="1.1" height="15.0" fill="rgb(205,21,38)" rx="2" ry="2"/>
+<text x="69.3" y="623.5"/>
+</g>
+<g class="">
+<title>__mmap64 (1 samples, 0.05%)</title><rect x="1177.9" y="549" width="0.6" height="15.0" fill="rgb(239,173,12)" rx="2" ry="2"/>
+<text x="1180.9" y="559.5"/>
+</g>
+<g class="">
+<title>nghttp3_stream_is_blocked (1 samples, 0.05%)</title><rect x="1149.2" y="677" width="0.6" height="15.0" fill="rgb(225,0,40)" rx="2" ry="2"/>
+<text x="1152.2" y="687.5"/>
+</g>
+<g class="">
+<title>memset (1 samples, 0.05%)</title><rect x="1144.6" y="405" width="0.6" height="15.0" fill="rgb(254,61,51)" rx="2" ry="2"/>
+<text x="1147.6" y="415.5"/>
+</g>
+<g class="">
+<title>sockfd_lookup_light (9 samples, 0.44%)</title><rect x="128.3" y="629" width="5.2" height="15.0" fill="rgb(240,85,6)" rx="2" ry="2"/>
+<text x="131.3" y="639.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ppe_encode_hd (1 samples, 0.05%)</title><rect x="1151.5" y="661" width="0.6" height="15.0" fill="rgb(229,205,44)" rx="2" ry="2"/>
+<text x="1154.5" y="671.5"/>
+</g>
+<g>
+<title>_vpaes_encrypt_core (7 samples, 0.34%)</title><rect x="286.3" y="549" width="4.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(235,191,32)"/>
+<text x="289.3" y="559.5"/>
+</g>
+<g class="">
+<title>intel_idle (8 samples, 0.39%)</title><rect x="1182.0" y="629" width="4.6" height="15.0" fill="rgb(230,147,15)" rx="2" ry="2"/>
+<text x="1185" y="639.5"/>
+</g>
+<g class="">
+<title>h2load::Http3Session::read_stream (62 samples, 3.02%)</title><rect x="171.4" y="597" width="35.6" height="15.0" fill="rgb(253,224,23)" rx="2" ry="2"/>
+<text x="174.4" y="607.5">h2..</text>
+</g>
+<g class="">
+<title>std::get&lt;0ul, h2load::Session*, std::default_delete&lt;h2load::Session&gt; &gt; (4 samples, 0.19%)</title><rect x="211.1" y="565" width="2.3" height="15.0" fill="rgb(236,16,25)" rx="2" ry="2"/>
+<text x="214.1" y="575.5"/>
+</g>
+<g class="">
+<title>apic_timer_interrupt (1 samples, 0.05%)</title><rect x="1103.8" y="629" width="0.6" height="15.0" fill="rgb(237,110,35)" rx="2" ry="2"/>
+<text x="1106.8" y="639.5"/>
+</g>
+<g class="">
+<title>ensure_decrypt_buffer (1 samples, 0.05%)</title><rect x="161.7" y="645" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(212,205,45)"/>
+<text x="164.7" y="655.5"/>
+</g>
+<g class="">
+<title>start_thread (12 samples, 0.58%)</title><rect x="1158.4" y="725" width="6.9" height="15.0" fill="rgb(253,96,47)" rx="2" ry="2"/>
+<text x="1161.4" y="735.5"/>
+</g>
+<g class="">
+<title>do_syscall_64 (9 samples, 0.44%)</title><rect x="1143.5" y="645" width="5.1" height="15.0" fill="rgb(210,15,45)" rx="2" ry="2"/>
+<text x="1146.5" y="655.5"/>
+</g>
+<g class="">
+<title>epoll_wait (5 samples, 0.24%)</title><rect x="1160.1" y="261" width="2.9" height="15.0" fill="rgb(212,170,34)" rx="2" ry="2"/>
+<text x="1163.1" y="271.5"/>
+</g>
+<g class="">
+<title>idle_cpu (1 samples, 0.05%)</title><rect x="1181.4" y="581" width="0.6" height="15.0" fill="rgb(208,47,28)" rx="2" ry="2"/>
+<text x="1184.4" y="591.5"/>
+</g>
+<g class="">
+<title>clockevents_program_event (1 samples, 0.05%)</title><rect x="1186.0" y="565" width="0.6" height="15.0" fill="rgb(234,111,42)" rx="2" ry="2"/>
+<text x="1189" y="575.5"/>
+</g>
+<g class="">
+<title>file_path (1 samples, 0.05%)</title><rect x="1177.9" y="405" width="0.6" height="15.0" fill="rgb(245,94,12)" rx="2" ry="2"/>
+<text x="1180.9" y="415.5"/>
+</g>
+<g>
+<title>update_process_times (1 samples, 0.05%)</title><rect x="348.4" y="469" width="0.5" height="15.0" fill="rgb(248,77,19)" rx="2" ry="2"/>
+<text x="351.4" y="479.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_on_data (1 samples, 0.05%)</title><rect x="18.6" y="725" width="0.6" height="15.0" fill="rgb(250,35,21)" rx="2" ry="2"/>
+<text x="21.6" y="735.5"/>
+</g>
+<g>
+<title>is_partially_overlapping (1 samples, 0.05%)</title><rect x="1091.8" y="597" width="0.5" height="15.0" fill="rgb(205,217,24)" rx="2" ry="2"/>
+<text x="1094.8" y="607.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_it_get (1 samples, 0.05%)</title><rect x="1097.5" y="629" width="0.6" height="15.0" fill="rgb(215,104,54)" rx="2" ry="2"/>
+<text x="1100.5" y="639.5"/>
+</g>
+<g class="">
+<title>cpuacct_charge (1 samples, 0.05%)</title><rect x="1162.4" y="37" width="0.6" height="15.0" fill="rgb(211,149,3)" rx="2" ry="2"/>
+<text x="1165.4" y="47.5"/>
+</g>
+<g>
+<title>hrtimer_interrupt (2 samples, 0.10%)</title><rect x="1085.4" y="501" width="1.2" height="15.0" fill="rgb(241,93,14)" rx="2" ry="2"/>
+<text x="1088.4" y="511.5"/>
+</g>
+<g class="">
+<title>_vpaes_preheat (1 samples, 0.05%)</title><rect x="269.1" y="549" width="0.6" height="15.0" fill="rgb(218,221,43)" rx="2" ry="2"/>
+<text x="272.1" y="559.5"/>
+</g>
+<g class="">
+<title>ip_finish_output2 (5 samples, 0.24%)</title><rect x="1145.8" y="421" width="2.8" height="15.0" fill="rgb(218,62,28)" rx="2" ry="2"/>
+<text x="1148.8" y="431.5"/>
+</g>
+<g class="">
+<title>EVP_EncryptFinal_ex (1 samples, 0.05%)</title><rect x="251.3" y="613" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(253,216,34)"/>
+<text x="254.3" y="623.5"/>
+</g>
+<g class="">
+<title>_dl_map_object (1 samples, 0.05%)</title><rect x="1177.9" y="613" width="0.6" height="15.0" fill="rgb(209,168,17)" rx="2" ry="2"/>
+<text x="1180.9" y="623.5"/>
+</g>
+<g class="">
+<title>CRYPTO_gcm128_aad (2 samples, 0.10%)</title><rect x="10.0" y="725" width="1.1" height="15.0" fill="rgb(218,179,18)" rx="2" ry="2"/>
+<text x="13" y="735.5"/>
+</g>
+<g class="">
+<title>secondary_startup_64 (20 samples, 0.97%)</title><rect x="1178.5" y="741" width="11.5" height="15.0" fill="rgb(248,155,44)" rx="2" ry="2"/>
+<text x="1181.5" y="751.5"/>
+</g>
+<g class="">
+<title>ngtcp2_acktr_immediate_ack (1 samples, 0.05%)</title><rect x="1094.1" y="661" width="0.5" height="15.0" fill="rgb(207,222,8)" rx="2" ry="2"/>
+<text x="1097.1" y="671.5"/>
+</g>
+<g class="">
+<title>nghttp3_stream_fill_outq (1 samples, 0.05%)</title><rect x="1148.6" y="661" width="0.6" height="15.0" fill="rgb(220,173,29)" rx="2" ry="2"/>
+<text x="1151.6" y="671.5"/>
+</g>
+<g class="">
+<title>__tick_broadcast_oneshot_control (1 samples, 0.05%)</title><rect x="1186.0" y="597" width="0.6" height="15.0" fill="rgb(222,84,24)" rx="2" ry="2"/>
+<text x="1189" y="607.5"/>
+</g>
+<g>
+<title>tick_sched_timer (1 samples, 0.05%)</title><rect x="1086.0" y="469" width="0.6" height="15.0" fill="rgb(250,192,27)" rx="2" ry="2"/>
+<text x="1089" y="479.5"/>
+</g>
+<g class="">
+<title>std::chrono::duration&lt;long, std::ratio&lt;1l, 1000000000l&gt; &gt;::count (1 samples, 0.05%)</title><rect x="192.7" y="421" width="0.6" height="15.0" fill="rgb(208,86,33)" rx="2" ry="2"/>
+<text x="195.7" y="431.5"/>
+</g>
+<g class="">
+<title>update_curr (1 samples, 0.05%)</title><rect x="1162.4" y="53" width="0.6" height="15.0" fill="rgb(223,32,41)" rx="2" ry="2"/>
+<text x="1165.4" y="63.5"/>
+</g>
+<g class="">
+<title>h2load::Http3Session::consume (10 samples, 0.49%)</title><rect x="196.1" y="485" width="5.8" height="15.0" fill="rgb(228,166,26)" rx="2" ry="2"/>
+<text x="199.1" y="495.5"/>
+</g>
+<g class="">
+<title>std::thread::_Invoker&lt;std::tuple&lt;std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="661" width="6.9" height="15.0" fill="rgb(209,51,45)" rx="2" ry="2"/>
+<text x="1161.4" y="671.5"/>
+</g>
+<g class="">
+<title>std::chrono::duration&lt;long, std::ratio&lt;1l, 1000000000l&gt; &gt;::zero (1 samples, 0.05%)</title><rect x="188.7" y="453" width="0.5" height="15.0" fill="rgb(238,109,48)" rx="2" ry="2"/>
+<text x="191.7" y="463.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64 (12 samples, 0.58%)</title><rect x="1166.4" y="741" width="6.9" height="15.0" fill="rgb(243,227,40)" rx="2" ry="2"/>
+<text x="1169.4" y="751.5"/>
+</g>
+<g>
+<title>__sched_text_start (1 samples, 0.05%)</title><rect x="1092.9" y="581" width="0.6" height="15.0" fill="rgb(252,44,8)" rx="2" ry="2"/>
+<text x="1095.9" y="591.5"/>
+</g>
+<g class="">
+<title>h2load::Client::write_quic (20 samples, 0.97%)</title><rect x="1142.9" y="725" width="11.5" height="15.0" fill="rgb(247,129,24)" rx="2" ry="2"/>
+<text x="1145.9" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_hp_mask_cb (1 samples, 0.05%)</title><rect x="1153.2" y="645" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(206,129,17)"/>
+<text x="1156.2" y="655.5"/>
+</g>
+<g class="">
+<title>__skb_try_recv_from_queue (3 samples, 0.15%)</title><rect x="79.5" y="565" width="1.7" height="15.0" fill="rgb(206,218,42)" rx="2" ry="2"/>
+<text x="82.5" y="575.5"/>
+</g>
+<g class="">
+<title>std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="373" width="6.9" height="15.0" fill="rgb(207,41,31)" rx="2" ry="2"/>
+<text x="1161.4" y="383.5"/>
+</g>
+<g class="">
+<title>sock_alloc_send_pskb (1 samples, 0.05%)</title><rect x="1144.6" y="469" width="0.6" height="15.0" fill="rgb(224,213,47)" rx="2" ry="2"/>
+<text x="1147.6" y="479.5"/>
+</g>
+<g class="">
+<title>memcpy (1 samples, 0.05%)</title><rect x="221.4" y="613" width="0.6" height="15.0" fill="rgb(254,99,52)" rx="2" ry="2"/>
+<text x="224.4" y="623.5"/>
+</g>
+<g class="">
+<title>tick_check_broadcast_expired (1 samples, 0.05%)</title><rect x="1188.3" y="677" width="0.6" height="15.0" fill="rgb(248,93,19)" rx="2" ry="2"/>
+<text x="1191.3" y="687.5"/>
+</g>
+<g class="">
+<title>smp_apic_timer_interrupt (1 samples, 0.05%)</title><rect x="248.4" y="565" width="0.6" height="15.0" fill="rgb(250,74,2)" rx="2" ry="2"/>
+<text x="251.4" y="575.5"/>
+</g>
+<g class="">
+<title>ep_scan_ready_list.constprop.0 (1 samples, 0.05%)</title><rect x="1160.7" y="165" width="0.6" height="15.0" fill="rgb(249,39,11)" rx="2" ry="2"/>
+<text x="1163.7" y="175.5"/>
+</g>
+<g class="">
+<title>ngtcp2_cpymem (1 samples, 0.05%)</title><rect x="1154.4" y="725" width="0.6" height="15.0" fill="rgb(215,38,23)" rx="2" ry="2"/>
+<text x="1157.4" y="735.5"/>
+</g>
+<g class="">
+<title>h2load::Client::quic_recv_stream_data (74 samples, 3.60%)</title><rect x="170.9" y="613" width="42.5" height="15.0" fill="rgb(239,173,38)" rx="2" ry="2"/>
+<text x="173.9" y="623.5">h2l..</text>
+</g>
+<g class="">
+<title>schedule_hrtimeout_range (3 samples, 0.15%)</title><rect x="1161.3" y="165" width="1.7" height="15.0" fill="rgb(247,166,44)" rx="2" ry="2"/>
+<text x="1164.3" y="175.5"/>
+</g>
+<g>
+<title>__memcpy_sse2_unaligned_erms (1 samples, 0.05%)</title><rect x="276.0" y="613" width="0.6" height="15.0" fill="rgb(208,96,16)" rx="2" ry="2"/>
+<text x="279" y="623.5"/>
+</g>
+<g class="">
+<title>std::call_once&lt;void  (12 samples, 0.58%)</title><rect x="1158.4" y="581" width="6.9" height="15.0" fill="rgb(248,49,11)" rx="2" ry="2"/>
+<text x="1161.4" y="591.5"/>
+</g>
+<g class="">
+<title>cpu_startup_entry (19 samples, 0.93%)</title><rect x="1178.5" y="709" width="10.9" height="15.0" fill="rgb(206,42,5)" rx="2" ry="2"/>
+<text x="1181.5" y="719.5"/>
+</g>
+<g class="">
+<title>ip_output (5 samples, 0.24%)</title><rect x="1145.8" y="469" width="2.8" height="15.0" fill="rgb(241,11,22)" rx="2" ry="2"/>
+<text x="1148.8" y="479.5"/>
+</g>
+<g class="">
+<title>ev_invoke_pending (3 samples, 0.15%)</title><rect x="1163.6" y="277" width="1.7" height="15.0" fill="rgb(253,92,46)" rx="2" ry="2"/>
+<text x="1166.6" y="287.5"/>
+</g>
+<g class="">
+<title>__check_object_size (1 samples, 0.05%)</title><rect x="1177.4" y="645" width="0.5" height="15.0" fill="rgb(218,47,22)" rx="2" ry="2"/>
+<text x="1180.4" y="655.5"/>
+</g>
+<g class="">
+<title>__x86_indirect_thunk_rax (1 samples, 0.05%)</title><rect x="1142.9" y="645" width="0.6" height="15.0" fill="rgb(248,11,21)" rx="2" ry="2"/>
+<text x="1145.9" y="655.5"/>
+</g>
+<g>
+<title>account_process_tick (1 samples, 0.05%)</title><rect x="348.4" y="453" width="0.5" height="15.0" fill="rgb(244,181,29)" rx="2" ry="2"/>
+<text x="351.4" y="463.5"/>
+</g>
+<g class="">
+<title>ixgbe_select_queue (1 samples, 0.05%)</title><rect x="1145.8" y="373" width="0.5" height="15.0" fill="rgb(225,76,36)" rx="2" ry="2"/>
+<text x="1148.8" y="383.5"/>
+</g>
+<g class="">
+<title>h2load::Client::record_ttfb (24 samples, 1.17%)</title><rect x="182.3" y="485" width="13.8" height="15.0" fill="rgb(244,106,47)" rx="2" ry="2"/>
+<text x="185.3" y="495.5"/>
+</g>
+<g class="">
+<title>ngtcp2_map_find (6 samples, 0.29%)</title><rect x="198.4" y="437" width="3.5" height="15.0" fill="rgb(221,168,5)" rx="2" ry="2"/>
+<text x="201.4" y="447.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::deferred_consume (1 samples, 0.05%)</title><rect x="1173.9" y="725" width="0.6" height="15.0" fill="rgb(228,219,25)" rx="2" ry="2"/>
+<text x="1176.9" y="735.5"/>
+</g>
+<g class="">
+<title>dev_queue_xmit (3 samples, 0.15%)</title><rect x="1145.8" y="405" width="1.7" height="15.0" fill="rgb(221,54,49)" rx="2" ry="2"/>
+<text x="1148.8" y="415.5"/>
+</g>
+<g class="">
+<title>_start (1 samples, 0.05%)</title><rect x="1177.9" y="741" width="0.6" height="15.0" fill="rgb(211,19,42)" rx="2" ry="2"/>
+<text x="1180.9" y="751.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_read_stream (62 samples, 3.02%)</title><rect x="171.4" y="581" width="35.6" height="15.0" fill="rgb(240,24,19)" rx="2" ry="2"/>
+<text x="174.4" y="591.5">ng..</text>
+</g>
+<g class="">
+<title>scheduler_tick (1 samples, 0.05%)</title><rect x="248.4" y="469" width="0.6" height="15.0" fill="rgb(219,30,49)" rx="2" ry="2"/>
+<text x="251.4" y="479.5"/>
+</g>
+<g class="">
+<title>kthread (1 samples, 0.05%)</title><rect x="1176.8" y="725" width="0.6" height="15.0" fill="rgb(238,162,32)" rx="2" ry="2"/>
+<text x="1179.8" y="735.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_writev_stream (7 samples, 0.34%)</title><rect x="1149.8" y="709" width="4.0" height="15.0" fill="rgb(238,198,30)" rx="2" ry="2"/>
+<text x="1152.8" y="719.5"/>
+</g>
+<g class="">
+<title>EVP_CIPHER_CTX_cipher (1 samples, 0.05%)</title><rect x="247.3" y="597" width="0.5" height="15.0" fill="rgb(230,92,39)" rx="2" ry="2"/>
+<text x="250.3" y="607.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ppe_ensure_hp_sample (1 samples, 0.05%)</title><rect x="1152.1" y="661" width="0.6" height="15.0" fill="rgb(238,8,42)" rx="2" ry="2"/>
+<text x="1155.1" y="671.5"/>
+</g>
+<g class="">
+<title>_dl_map_segments (1 samples, 0.05%)</title><rect x="1177.9" y="581" width="0.6" height="15.0" fill="rgb(233,202,11)" rx="2" ry="2"/>
+<text x="1180.9" y="591.5"/>
+</g>
+<g>
+<title>smp_apic_timer_interrupt (2 samples, 0.10%)</title><rect x="1085.4" y="517" width="1.2" height="15.0" fill="rgb(229,76,5)" rx="2" ry="2"/>
+<text x="1088.4" y="527.5"/>
+</g>
+<g class="">
+<title>[libngtcp2_crypto_openssl.so.0.0.0] (1 samples, 0.05%)</title><rect x="243.2" y="629" width="0.6" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(221,139,1)"/>
+<text x="246.2" y="639.5"/>
+</g>
+<g class="">
+<title>reweight_entity (1 samples, 0.05%)</title><rect x="248.4" y="421" width="0.6" height="15.0" fill="rgb(229,101,34)" rx="2" ry="2"/>
+<text x="251.4" y="431.5"/>
+</g>
+<g class="">
+<title>sock_sendmsg (8 samples, 0.39%)</title><rect x="1144.0" y="565" width="4.6" height="15.0" fill="rgb(212,191,16)" rx="2" ry="2"/>
+<text x="1147" y="575.5"/>
+</g>
+<g class="">
+<title>udp_sendmsg (7 samples, 0.34%)</title><rect x="1144.6" y="533" width="4.0" height="15.0" fill="rgb(220,65,45)" rx="2" ry="2"/>
+<text x="1147.6" y="543.5"/>
+</g>
+<g>
+<title>ngtcp2_crypto_decrypt_cb (1,421 samples, 69.18%)</title><rect x="276.6" y="645" width="816.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(253,33,36)"/>
+<text x="279.6" y="655.5">ngtcp2_crypto_decrypt_cb </text>
+</g>
+<g class="">
+<title>update_process_times (1 samples, 0.05%)</title><rect x="78.4" y="469" width="0.5" height="15.0" fill="rgb(206,182,3)" rx="2" ry="2"/>
+<text x="81.4" y="479.5"/>
+</g>
+<g class="">
+<title>call_function_single_interrupt (5 samples, 0.24%)</title><rect x="1179.1" y="629" width="2.9" height="15.0" fill="rgb(245,190,16)" rx="2" ry="2"/>
+<text x="1182.1" y="639.5"/>
+</g>
+<g class="">
+<title>_vpaes_encrypt_core (10 samples, 0.49%)</title><rect x="263.3" y="549" width="5.8" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(211,160,38)"/>
+<text x="266.3" y="559.5"/>
+</g>
+<g class="">
+<title>_copy_to_iter (51 samples, 2.48%)</title><rect x="82.4" y="581" width="29.3" height="15.0" fill="rgb(210,226,8)" rx="2" ry="2"/>
+<text x="85.4" y="591.5">_..</text>
+</g>
+<g class="">
+<title>ngtcp2_gaptr_is_pushed (16 samples, 0.78%)</title><rect x="1126.8" y="645" width="9.2" height="15.0" fill="rgb(230,9,15)" rx="2" ry="2"/>
+<text x="1129.8" y="655.5"/>
+</g>
+<g class="">
+<title>std::function&lt;int  (1 samples, 0.05%)</title><rect x="1164.7" y="229" width="0.6" height="15.0" fill="rgb(216,50,33)" rx="2" ry="2"/>
+<text x="1167.7" y="239.5"/>
+</g>
+<g class="">
+<title>__GI___clock_gettime (1 samples, 0.05%)</title><rect x="1163.0" y="277" width="0.6" height="15.0" fill="rgb(251,177,39)" rx="2" ry="2"/>
+<text x="1166" y="287.5"/>
+</g>
+<g class="">
+<title>account_system_index_time (1 samples, 0.05%)</title><rect x="78.4" y="421" width="0.5" height="15.0" fill="rgb(233,23,37)" rx="2" ry="2"/>
+<text x="81.4" y="431.5"/>
+</g>
+<g>
+<title>EVP_DecryptInit_ex (1 samples, 0.05%)</title><rect x="310.5" y="613" width="0.5" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(249,117,27)"/>
+<text x="313.5" y="623.5"/>
+</g>
+<g class="">
+<title>perf (1 samples, 0.05%)</title><rect x="1177.4" y="757" width="0.5" height="15.0" fill="rgb(246,128,23)" rx="2" ry="2"/>
+<text x="1180.4" y="767.5"/>
+</g>
+<g class="">
+<title>CRYPTO_gcm128_setiv (1 samples, 0.05%)</title><rect x="1152.7" y="581" width="0.5" height="15.0" fill="rgb(212,8,34)" rx="2" ry="2"/>
+<text x="1155.7" y="591.5"/>
+</g>
+<g class="">
+<title>check_match (1 samples, 0.05%)</title><rect x="1165.3" y="581" width="0.6" height="15.0" fill="rgb(216,61,50)" rx="2" ry="2"/>
+<text x="1168.3" y="591.5"/>
+</g>
+<g class="">
+<title>__do_execve_file.isra.0 (1 samples, 0.05%)</title><rect x="1177.4" y="677" width="0.5" height="15.0" fill="rgb(254,57,7)" rx="2" ry="2"/>
+<text x="1180.4" y="687.5"/>
+</g>
+<g>
+<title>exit_to_usermode_loop (1 samples, 0.05%)</title><rect x="1092.9" y="613" width="0.6" height="15.0" fill="rgb(230,176,51)" rx="2" ry="2"/>
+<text x="1095.9" y="623.5"/>
+</g>
+<g class="">
+<title>__bswap_64 (6 samples, 0.29%)</title><rect x="218.0" y="597" width="3.4" height="15.0" fill="rgb(236,186,18)" rx="2" ry="2"/>
+<text x="221" y="607.5"/>
+</g>
+<g class="">
+<title>dequeue_task_fair (2 samples, 0.10%)</title><rect x="1161.9" y="85" width="1.1" height="15.0" fill="rgb(230,130,5)" rx="2" ry="2"/>
+<text x="1164.9" y="95.5"/>
+</g>
+<g class="">
+<title>std::array&lt;unsigned char, 65536ul&gt;::data (2 samples, 0.10%)</title><rect x="1141.7" y="709" width="1.2" height="15.0" fill="rgb(242,113,48)" rx="2" ry="2"/>
+<text x="1144.7" y="719.5"/>
+</g>
+<g class="">
+<title>h2load::Client::record_ttfb (1 samples, 0.05%)</title><rect x="18.0" y="725" width="0.6" height="15.0" fill="rgb(236,32,51)" rx="2" ry="2"/>
+<text x="21" y="735.5"/>
+</g>
+<g class="">
+<title>deactivate_task (1 samples, 0.05%)</title><rect x="1176.8" y="661" width="0.6" height="15.0" fill="rgb(247,82,48)" rx="2" ry="2"/>
+<text x="1179.8" y="671.5"/>
+</g>
+<g class="">
+<title>deactivate_task (2 samples, 0.10%)</title><rect x="1161.9" y="101" width="1.1" height="15.0" fill="rgb(232,132,41)" rx="2" ry="2"/>
+<text x="1164.9" y="111.5"/>
+</g>
+<g class="">
+<title>tick_sched_timer (1 samples, 0.05%)</title><rect x="78.4" y="501" width="0.5" height="15.0" fill="rgb(224,96,2)" rx="2" ry="2"/>
+<text x="81.4" y="511.5"/>
+</g>
+<g class="">
+<title>do_syscall_64 (4 samples, 0.19%)</title><rect x="1160.7" y="229" width="2.3" height="15.0" fill="rgb(221,91,44)" rx="2" ry="2"/>
+<text x="1163.7" y="239.5"/>
+</g>
+<g class="">
+<title>_dl_start_final (1 samples, 0.05%)</title><rect x="1177.9" y="709" width="0.6" height="15.0" fill="rgb(248,117,28)" rx="2" ry="2"/>
+<text x="1180.9" y="719.5"/>
+</g>
+<g class="">
+<title>__libc_recvfrom (158 samples, 7.69%)</title><rect x="44.5" y="709" width="90.7" height="15.0" fill="rgb(211,81,49)" rx="2" ry="2"/>
+<text x="47.5" y="719.5">__libc_recvf..</text>
+</g>
+<g class="">
+<title>__perf_event_enable (4 samples, 0.19%)</title><rect x="1179.1" y="533" width="2.3" height="15.0" fill="rgb(216,69,29)" rx="2" ry="2"/>
+<text x="1182.1" y="543.5"/>
+</g>
+<g class="">
+<title>std::__future_base::_Task_setter&lt;std::unique_ptr&lt;std::__future_base::_Result&lt;void&gt;, std::__future_base::_Result_base::_Deleter&gt;, std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="405" width="6.9" height="15.0" fill="rgb(206,5,51)" rx="2" ry="2"/>
+<text x="1161.4" y="415.5"/>
+</g>
+<g class="">
+<title>ngtcp2_map_find (2 samples, 0.10%)</title><rect x="207.0" y="565" width="1.2" height="15.0" fill="rgb(228,152,25)" rx="2" ry="2"/>
+<text x="210" y="575.5"/>
+</g>
+<g class="">
+<title>[libev.so.4.0.0] (7 samples, 0.34%)</title><rect x="1159.0" y="277" width="4.0" height="15.0" fill="rgb(249,94,36)" rx="2" ry="2"/>
+<text x="1162" y="287.5"/>
+</g>
+<g class="">
+<title>dev_queue_xmit (2 samples, 0.10%)</title><rect x="1147.5" y="389" width="1.1" height="15.0" fill="rgb(243,73,30)" rx="2" ry="2"/>
+<text x="1150.5" y="399.5"/>
+</g>
+<g class="">
+<title>nghttp3_http_on_data_chunk (2 samples, 0.10%)</title><rect x="201.9" y="533" width="1.1" height="15.0" fill="rgb(209,116,46)" rx="2" ry="2"/>
+<text x="204.9" y="543.5"/>
+</g>
+<g class="">
+<title>std::_Function_handler&lt;int  (1 samples, 0.05%)</title><rect x="1164.7" y="213" width="0.6" height="15.0" fill="rgb(209,184,45)" rx="2" ry="2"/>
+<text x="1167.7" y="223.5"/>
+</g>
+<g class="">
+<title>__fget_light (1 samples, 0.05%)</title><rect x="132.9" y="613" width="0.6" height="15.0" fill="rgb(205,66,22)" rx="2" ry="2"/>
+<text x="135.9" y="623.5"/>
+</g>
+<g class="">
+<title>std::__future_base::_State_baseV2::_M_set_result (12 samples, 0.58%)</title><rect x="1158.4" y="597" width="6.9" height="15.0" fill="rgb(231,95,10)" rx="2" ry="2"/>
+<text x="1161.4" y="607.5"/>
+</g>
+<g class="">
+<title>apic_timer_interrupt (1 samples, 0.05%)</title><rect x="78.4" y="565" width="0.5" height="15.0" fill="rgb(208,122,21)" rx="2" ry="2"/>
+<text x="81.4" y="575.5"/>
+</g>
+<g class="">
+<title>__hrtimer_run_queues (1 samples, 0.05%)</title><rect x="78.4" y="517" width="0.5" height="15.0" fill="rgb(228,110,7)" rx="2" ry="2"/>
+<text x="81.4" y="527.5"/>
+</g>
+<g class="">
+<title>[unknown] (1 samples, 0.05%)</title><rect x="1177.4" y="741" width="0.5" height="15.0" fill="rgb(217,123,46)" rx="2" ry="2"/>
+<text x="1180.4" y="751.5"/>
+</g>
+<g class="">
+<title>std::__uniq_ptr_impl&lt;h2load::Session, std::default_delete&lt;h2load::Session&gt; &gt;::_M_ptr (1 samples, 0.05%)</title><rect x="1176.2" y="741" width="0.6" height="15.0" fill="rgb(225,200,46)" rx="2" ry="2"/>
+<text x="1179.2" y="751.5"/>
+</g>
+<g class="">
+<title>nghttp3_conn_writev_stream (2 samples, 0.10%)</title><rect x="1148.6" y="693" width="1.2" height="15.0" fill="rgb(236,85,20)" rx="2" ry="2"/>
+<text x="1151.6" y="703.5"/>
+</g>
+<g class="">
+<title>__pthread_once_slow (12 samples, 0.58%)</title><rect x="1158.4" y="549" width="6.9" height="15.0" fill="rgb(248,48,37)" rx="2" ry="2"/>
+<text x="1161.4" y="559.5"/>
+</g>
+<g class="">
+<title>__dev_queue_xmit (2 samples, 0.10%)</title><rect x="1147.5" y="373" width="1.1" height="15.0" fill="rgb(226,47,27)" rx="2" ry="2"/>
+<text x="1150.5" y="383.5"/>
+</g>
+<g class="">
+<title>std::_Function_handler&lt;std::unique_ptr&lt;std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter&gt;  (12 samples, 0.58%)</title><rect x="1158.4" y="421" width="6.9" height="15.0" fill="rgb(254,49,27)" rx="2" ry="2"/>
+<text x="1161.4" y="431.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.05%)</title><rect x="1177.4" y="725" width="0.5" height="15.0" fill="rgb(240,106,18)" rx="2" ry="2"/>
+<text x="1180.4" y="735.5"/>
+</g>
+<g class="">
+<title>smp_call_function_single_interrupt (5 samples, 0.24%)</title><rect x="1179.1" y="613" width="2.9" height="15.0" fill="rgb(205,154,50)" rx="2" ry="2"/>
+<text x="1182.1" y="623.5"/>
+</g>
+<g class="">
+<title>__libc_sendmsg (10 samples, 0.49%)</title><rect x="1142.9" y="677" width="5.7" height="15.0" fill="rgb(217,67,15)" rx="2" ry="2"/>
+<text x="1145.9" y="687.5"/>
+</g>
+<g class="">
+<title>std::__invoke_impl&lt;int, int  (1 samples, 0.05%)</title><rect x="1164.1" y="181" width="0.6" height="15.0" fill="rgb(247,182,32)" rx="2" ry="2"/>
+<text x="1167.1" y="191.5"/>
+</g>
+<g class="">
+<title>__switch_to (1 samples, 0.05%)</title><rect x="1187.1" y="645" width="0.6" height="15.0" fill="rgb(233,132,36)" rx="2" ry="2"/>
+<text x="1190.1" y="655.5"/>
+</g>
+<g class="">
+<title>[libngtcp2.so.0.0.0] (1 samples, 0.05%)</title><rect x="231.8" y="597" width="0.5" height="15.0" fill="rgb(205,208,6)" rx="2" ry="2"/>
+<text x="234.8" y="607.5"/>
+</g>
+<g>
+<title>aes_gcm_cipher (1,345 samples, 65.48%)</title><rect x="319.1" y="597" width="772.7" height="15.0" fill="rgb(252,192,50)" rx="2" ry="2"/>
+<text x="322.1" y="607.5">aes_gcm_cipher </text>
+</g>
+<g>
+<title>account_user_time (1 samples, 0.05%)</title><rect x="348.4" y="437" width="0.5" height="15.0" fill="rgb(217,65,46)" rx="2" ry="2"/>
+<text x="351.4" y="447.5"/>
+</g>
+<g class="">
+<title>[libngtcp2.so.0.0.0] (3 samples, 0.15%)</title><rect x="147.9" y="693" width="1.7" height="15.0" fill="rgb(247,6,4)" rx="2" ry="2"/>
+<text x="150.9" y="703.5"/>
+</g>
+<g class="">
+<title>EVP_CipherInit_ex (13 samples, 0.63%)</title><rect x="243.8" y="613" width="7.5" height="15.0" fill="rgb(234,223,40)" rx="2" ry="2"/>
+<text x="246.8" y="623.5"/>
+</g>
+<g class="">
+<title>do_idle (1 samples, 0.05%)</title><rect x="1189.4" y="709" width="0.6" height="15.0" fill="rgb(237,40,14)" rx="2" ry="2"/>
+<text x="1192.4" y="719.5"/>
+</g>
+<g class="">
+<title>[h2load] (4 samples, 0.19%)</title><rect x="138.1" y="693" width="2.3" height="15.0" fill="rgb(231,17,51)" rx="2" ry="2"/>
+<text x="141.1" y="703.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::timestamp (19 samples, 0.93%)</title><rect x="135.2" y="709" width="11.0" height="15.0" fill="rgb(209,199,11)" rx="2" ry="2"/>
+<text x="138.2" y="719.5"/>
+</g>
+<g>
+<title>smp_apic_timer_interrupt (1 samples, 0.05%)</title><rect x="348.4" y="549" width="0.5" height="15.0" fill="rgb(214,106,32)" rx="2" ry="2"/>
+<text x="351.4" y="559.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_sched_ack (8 samples, 0.39%)</title><rect x="1094.6" y="661" width="4.6" height="15.0" fill="rgb(252,175,37)" rx="2" ry="2"/>
+<text x="1097.6" y="671.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_adjust_pkt_num (2 samples, 0.10%)</title><rect x="1099.8" y="661" width="1.2" height="15.0" fill="rgb(206,119,37)" rx="2" ry="2"/>
+<text x="1102.8" y="671.5"/>
+</g>
+<g class="">
+<title>copy_strings.isra.0 (1 samples, 0.05%)</title><rect x="1177.4" y="661" width="0.5" height="15.0" fill="rgb(211,191,23)" rx="2" ry="2"/>
+<text x="1180.4" y="671.5"/>
+</g>
+<g>
+<title>memcpy (2 samples, 0.10%)</title><rect x="275.4" y="629" width="1.2" height="15.0" fill="rgb(207,156,41)" rx="2" ry="2"/>
+<text x="278.4" y="639.5"/>
+</g>
+<g>
+<title>CRYPTO_memcmp (2 samples, 0.10%)</title><rect x="309.3" y="581" width="1.2" height="15.0" fill="rgb(231,134,49)" rx="2" ry="2"/>
+<text x="312.3" y="591.5"/>
+</g>
+<g class="">
+<title>ngtcp2_cid_init (3 samples, 0.15%)</title><rect x="1102.7" y="645" width="1.7" height="15.0" fill="rgb(228,152,17)" rx="2" ry="2"/>
+<text x="1105.7" y="655.5"/>
+</g>
+<g class="">
+<title>task_tick_fair (1 samples, 0.05%)</title><rect x="248.4" y="453" width="0.6" height="15.0" fill="rgb(213,106,32)" rx="2" ry="2"/>
+<text x="251.4" y="463.5"/>
+</g>
+<g class="">
+<title>udp_skb_destructor (1 samples, 0.05%)</title><rect x="80.7" y="549" width="0.5" height="15.0" fill="rgb(232,71,1)" rx="2" ry="2"/>
+<text x="83.7" y="559.5"/>
+</g>
+<g class="">
+<title>generic_smp_call_function_single_interrupt (4 samples, 0.19%)</title><rect x="1179.1" y="597" width="2.3" height="15.0" fill="rgb(222,184,53)" rx="2" ry="2"/>
+<text x="1182.1" y="607.5"/>
+</g>
+<g class="">
+<title>__hrtimer_run_queues (1 samples, 0.05%)</title><rect x="248.4" y="533" width="0.6" height="15.0" fill="rgb(219,139,11)" rx="2" ry="2"/>
+<text x="251.4" y="543.5"/>
+</g>
+<g class="">
+<title>schedule (1 samples, 0.05%)</title><rect x="1176.8" y="693" width="0.6" height="15.0" fill="rgb(240,85,51)" rx="2" ry="2"/>
+<text x="1179.8" y="703.5"/>
+</g>
+<g class="">
+<title>conn_recv_stream (104 samples, 5.06%)</title><rect x="165.1" y="661" width="59.8" height="15.0" fill="rgb(226,53,5)" rx="2" ry="2"/>
+<text x="168.1" y="671.5">conn_r..</text>
+</g>
+<g class="">
+<title>ksl_bsearch (8 samples, 0.39%)</title><rect x="1130.8" y="613" width="4.6" height="15.0" fill="rgb(214,215,36)" rx="2" ry="2"/>
+<text x="1133.8" y="623.5"/>
+</g>
+<g class="">
+<title>call_cpuidle (13 samples, 0.63%)</title><rect x="1179.1" y="677" width="7.5" height="15.0" fill="rgb(249,215,4)" rx="2" ry="2"/>
+<text x="1182.1" y="687.5"/>
+</g>
+<g class="">
+<title>ngtcp2_crypto_hp_mask_cb (51 samples, 2.48%)</title><rect x="242.1" y="645" width="29.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(215,227,3)"/>
+<text x="245.1" y="655.5">n..</text>
+</g>
+<g class="">
+<title>log_pkt_hd (1 samples, 0.05%)</title><rect x="1093.5" y="661" width="0.6" height="15.0" fill="rgb(251,53,36)" rx="2" ry="2"/>
+<text x="1096.5" y="671.5"/>
+</g>
+<g class="">
+<title>ksl_bsearch (1 samples, 0.05%)</title><rect x="1098.1" y="613" width="0.6" height="15.0" fill="rgb(252,35,0)" rx="2" ry="2"/>
+<text x="1101.1" y="623.5"/>
+</g>
+<g class="">
+<title>aes_gcm_init_key (1 samples, 0.05%)</title><rect x="1152.7" y="597" width="0.5" height="15.0" fill="rgb(222,181,41)" rx="2" ry="2"/>
+<text x="1155.7" y="607.5"/>
+</g>
+<g class="">
+<title>__sys_sendmsg (1 samples, 0.05%)</title><rect x="1143.5" y="629" width="0.5" height="15.0" fill="rgb(238,104,10)" rx="2" ry="2"/>
+<text x="1146.5" y="639.5"/>
+</g>
+<g class="">
+<title>EVP_CIPHER_CTX_get_cipher_data (1 samples, 0.05%)</title><rect x="269.7" y="581" width="0.5" height="15.0" fill="rgb(236,210,48)" rx="2" ry="2"/>
+<text x="272.7" y="591.5"/>
+</g>
+<g class="">
+<title>ensure_decrypt_buffer (4 samples, 0.19%)</title><rect x="162.2" y="645" width="2.3" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(252,135,23)"/>
+<text x="165.2" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_lower_bound (1 samples, 0.05%)</title><rect x="1098.1" y="629" width="0.6" height="15.0" fill="rgb(240,26,18)" rx="2" ry="2"/>
+<text x="1101.1" y="639.5"/>
+</g>
+<g class="">
+<title>ngtcp2_path_storage_zero (1 samples, 0.05%)</title><rect x="1153.8" y="709" width="0.6" height="15.0" fill="rgb(238,98,51)" rx="2" ry="2"/>
+<text x="1156.8" y="719.5"/>
+</g>
+<g class="">
+<title>_dl_catch_exception (1 samples, 0.05%)</title><rect x="1177.9" y="645" width="0.6" height="15.0" fill="rgb(221,3,49)" rx="2" ry="2"/>
+<text x="1180.9" y="655.5"/>
+</g>
+<g class="">
+<title>ngtcp2_rob_data_at (2 samples, 0.10%)</title><rect x="213.4" y="629" width="1.1" height="15.0" fill="rgb(214,12,53)" rx="2" ry="2"/>
+<text x="216.4" y="639.5"/>
+</g>
+<g class="">
+<title>nghttp3_stream_transit_rx_http_state (1 samples, 0.05%)</title><rect x="203.6" y="549" width="0.6" height="15.0" fill="rgb(210,204,42)" rx="2" ry="2"/>
+<text x="206.6" y="559.5"/>
+</g>
+<g class="">
+<title>account_process_tick (1 samples, 0.05%)</title><rect x="78.4" y="453" width="0.5" height="15.0" fill="rgb(229,105,3)" rx="2" ry="2"/>
+<text x="81.4" y="463.5"/>
+</g>
+<g class="">
+<title>CRYPTO_ctr128_encrypt (21 samples, 1.02%)</title><rect x="257.6" y="581" width="12.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(219,140,15)"/>
+<text x="260.6" y="591.5"/>
+</g>
+<g class="">
+<title>std::__invoke_impl&lt;void, h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="341" width="6.9" height="15.0" fill="rgb(249,101,43)" rx="2" ry="2"/>
+<text x="1161.4" y="351.5"/>
+</g>
+<g class="">
+<title>perf_event_mmap (1 samples, 0.05%)</title><rect x="1177.9" y="421" width="0.6" height="15.0" fill="rgb(238,184,28)" rx="2" ry="2"/>
+<text x="1180.9" y="431.5"/>
+</g>
+<g>
+<title>EVP_DecryptFinal_ex (35 samples, 1.70%)</title><rect x="290.4" y="613" width="20.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(211,64,31)"/>
+<text x="293.4" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_pkt_decode_stream_frame (8 samples, 0.39%)</title><rect x="1108.4" y="661" width="4.6" height="15.0" fill="rgb(253,71,3)" rx="2" ry="2"/>
+<text x="1111.4" y="671.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_update_key (4 samples, 0.19%)</title><rect x="1124.5" y="629" width="2.3" height="15.0" fill="rgb(231,187,7)" rx="2" ry="2"/>
+<text x="1127.5" y="639.5"/>
+</g>
+<g class="">
+<title>kfree_skbmem (10 samples, 0.49%)</title><rect x="116.9" y="549" width="5.7" height="15.0" fill="rgb(248,193,20)" rx="2" ry="2"/>
+<text x="119.9" y="559.5"/>
+</g>
+<g class="">
+<title>__x64_sys_execve (1 samples, 0.05%)</title><rect x="1177.4" y="693" width="0.5" height="15.0" fill="rgb(211,24,8)" rx="2" ry="2"/>
+<text x="1180.4" y="703.5"/>
+</g>
+<g class="">
+<title>update_process_times (1 samples, 0.05%)</title><rect x="248.4" y="485" width="0.6" height="15.0" fill="rgb(215,103,20)" rx="2" ry="2"/>
+<text x="251.4" y="495.5"/>
+</g>
+<g>
+<title>__memcpy_sse2_unaligned (1 samples, 0.05%)</title><rect x="275.4" y="613" width="0.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2"/>
+<text x="278.4" y="623.5"/>
+</g>
+<g>
+<title>apic_timer_interrupt (1 samples, 0.05%)</title><rect x="348.4" y="565" width="0.5" height="15.0" fill="rgb(226,67,19)" rx="2" ry="2"/>
+<text x="351.4" y="575.5"/>
+</g>
+<g>
+<title>tick_sched_handle (1 samples, 0.05%)</title><rect x="1086.0" y="453" width="0.6" height="15.0" fill="rgb(248,14,1)" rx="2" ry="2"/>
+<text x="1089" y="463.5"/>
+</g>
+<g class="">
+<title>h2load::(anonymous namespace)::recv_data (37 samples, 1.80%)</title><rect x="180.6" y="517" width="21.3" height="15.0" fill="rgb(231,218,48)" rx="2" ry="2"/>
+<text x="183.6" y="527.5"/>
+</g>
+<g>
+<title>vpaes_encrypt (7 samples, 0.34%)</title><rect x="286.3" y="565" width="4.1" height="15.0" fill="rgb(230,0,230)" rx="2" ry="2" _orig_fill="rgb(235,170,41)"/>
+<text x="289.3" y="575.5"/>
+</g>
+<g class="">
+<title>_dl_start_final (1 samples, 0.05%)</title><rect x="1165.3" y="709" width="0.6" height="15.0" fill="rgb(214,226,22)" rx="2" ry="2"/>
+<text x="1168.3" y="719.5"/>
+</g>
+<g class="">
+<title>ip_local_out (5 samples, 0.24%)</title><rect x="1145.8" y="485" width="2.8" height="15.0" fill="rgb(243,91,36)" rx="2" ry="2"/>
+<text x="1148.8" y="495.5"/>
+</g>
+<g class="">
+<title>ngtcp2_cid_less (18 samples, 0.88%)</title><rect x="228.9" y="613" width="10.3" height="15.0" fill="rgb(229,82,25)" rx="2" ry="2"/>
+<text x="231.9" y="623.5"/>
+</g>
+<g class="">
+<title>d_path (1 samples, 0.05%)</title><rect x="1177.9" y="389" width="0.6" height="15.0" fill="rgb(248,186,1)" rx="2" ry="2"/>
+<text x="1180.9" y="399.5"/>
+</g>
+<g class="">
+<title>gcm_ghash_4bit (1 samples, 0.05%)</title><rect x="17.5" y="725" width="0.5" height="15.0" fill="rgb(231,90,47)" rx="2" ry="2"/>
+<text x="20.5" y="735.5"/>
+</g>
+<g>
+<title>update_process_times (1 samples, 0.05%)</title><rect x="1086.0" y="437" width="0.6" height="15.0" fill="rgb(212,208,26)" rx="2" ry="2"/>
+<text x="1089" y="447.5"/>
+</g>
+<g class="">
+<title>__get_user_4 (1 samples, 0.05%)</title><rect x="61.1" y="629" width="0.6" height="15.0" fill="rgb(243,55,23)" rx="2" ry="2"/>
+<text x="64.1" y="639.5"/>
+</g>
+<g class="">
+<title>elf_machine_rela (1 samples, 0.05%)</title><rect x="1165.3" y="629" width="0.6" height="15.0" fill="rgb(223,162,17)" rx="2" ry="2"/>
+<text x="1168.3" y="639.5"/>
+</g>
+<g class="">
+<title>ngtcp2_ksl_begin (1 samples, 0.05%)</title><rect x="215.1" y="613" width="0.6" height="15.0" fill="rgb(237,135,6)" rx="2" ry="2"/>
+<text x="218.1" y="623.5"/>
+</g>
+<g class="">
+<title>ngtcp2_conn_write_vmsg (7 samples, 0.34%)</title><rect x="1149.8" y="693" width="4.0" height="15.0" fill="rgb(240,220,0)" rx="2" ry="2"/>
+<text x="1152.8" y="703.5"/>
+</g>
+<g class="">
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;std::__future_base::_Async_state_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;h2load::main (12 samples, 0.58%)</title><rect x="1158.4" y="693" width="6.9" height="15.0" fill="rgb(222,210,18)" rx="2" ry="2"/>
+<text x="1161.4" y="703.5"/>
+</g>
+<g class="">
+<title>__memcpy_sse2_unaligned (2 samples, 0.10%)</title><rect x="1107.3" y="613" width="1.1" height="15.0" fill="rgb(220,224,35)" rx="2" ry="2"/>
+<text x="1110.3" y="623.5"/>
+</g>
+<g class="">
+<title>do_syscall_64 (1 samples, 0.05%)</title><rect x="1177.4" y="709" width="0.5" height="15.0" fill="rgb(244,186,22)" rx="2" ry="2"/>
+<text x="1180.4" y="719.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64_after_hwframe (139 samples, 6.77%)</title><rect x="54.2" y="693" width="79.9" height="15.0" fill="rgb(235,79,39)" rx="2" ry="2"/>
+<text x="57.2" y="703.5">entry_SY..</text>
+</g>
+<g class="">
+<title>rob_write_data (1 samples, 0.05%)</title><rect x="221.4" y="629" width="0.6" height="15.0" fill="rgb(241,115,46)" rx="2" ry="2"/>
+<text x="224.4" y="639.5"/>
+</g>
+<g>
+<title>hrtimer_interrupt (1 samples, 0.05%)</title><rect x="348.4" y="533" width="0.5" height="15.0" fill="rgb(250,228,52)" rx="2" ry="2"/>
+<text x="351.4" y="543.5"/>
+</g>
+<g class="">
+<title>entry_SYSCALL_64_after_hwframe (4 samples, 0.19%)</title><rect x="1160.7" y="245" width="2.3" height="15.0" fill="rgb(227,3,54)" rx="2" ry="2"/>
+<text x="1163.7" y="255.5"/>
+</g>
+<g class="">
+<title>__mmap64 (1 samples, 0.05%)</title><rect x="1177.9" y="565" width="0.6" height="15.0" fill="rgb(205,160,32)" rx="2" ry="2"/>
+<text x="1180.9" y="575.5"/>
+</g>
+<g class="">
+<title>EVP_CIPHER_CTX_num (1 samples, 0.05%)</title><rect x="270.2" y="581" width="0.6" height="15.0" fill="rgb(251,84,6)" rx="2" ry="2"/>
+<text x="273.2" y="591.5"/>
+</g>
+<g>
+<title>cpufreq_this_cpu_can_update (1 samples, 0.05%)</title><rect x="1086.0" y="373" width="0.6" height="15.0" fill="rgb(247,2,46)" rx="2" ry="2"/>
+<text x="1089" y="383.5"/>
+</g>
+<g class="">
+<title>kworker/1:0-eve (1 samples, 0.05%)</title><rect x="1176.8" y="757" width="0.6" height="15.0" fill="rgb(229,46,53)" rx="2" ry="2"/>
+<text x="1179.8" y="767.5"/>
+</g>
+</g>
+</svg>
