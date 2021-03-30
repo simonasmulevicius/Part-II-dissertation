@@ -15,7 +15,7 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
 ### Prerequisites:
 1. Create a designated `evaluation` folder
 2. Clone `openssl`, `nghttp3`, `ngtcp2` and `nghttp2` repositories to `evaluation` folder 
-    - To build them use instructions from https://github.com/simonasmulevicius/ngtcp2#build-from-git, https://github.com/simonasmulevicius/ngtcp2#build-from-git and https://github.com/nghttp2/nghttp2/tree/quic#building-from-git
+    - To build them use instructions from https://github.com/simonasmulevicius/ngtcp2#build-from-git and https://github.com/nghttp2/nghttp2/tree/quic#building-from-git
 
     - Extra flags will be needed 
 
