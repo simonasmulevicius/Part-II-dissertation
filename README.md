@@ -24,7 +24,7 @@ https://github.com/simonasmulevicius/NetFPGA-SUME-dev (release 1.11)
     mkdir evaluation
     cd evaluation  
 
-    git clone --depth 1 -b OpenSSL_1_1_1g-quic-draft-33 https://github.com/simonasmulevicius/openssl
+    git clone --depth 1 -b OpenSSL_1_1_1k+quic https://github.com/simonasmulevicius/openssl
     cd openssl
     ./config enable-tls1_3 --prefix=$PWD/build CXXFLAGS="-g -fno-omit-frame-pointer"
     make -j$(nproc)
