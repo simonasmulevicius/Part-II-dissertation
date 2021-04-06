@@ -17,7 +17,7 @@ def set_MTU(mtu, use_localhost=True):
     mtu = str(mtu)
     print("Using MTU:", mtu, "bytes")
     if use_localhost:
-        run_command_in_terminal(["ifconfig", "lo", "mtu", mtu])
+        run_command_in_terminal(["taskset", "-c", "1", "ifconfig", "lo", "mtu", mtu])
     else:
         run_command_in_terminal(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client", "ifconfig", "eth2", "mtu", mtu])
     
@@ -26,7 +26,7 @@ def set_MTU_server(mtu, use_localhost=True):
     mtu = str(mtu)
     print("Using MTU:", mtu, "bytes")
     if use_localhost:
-        run_command_in_terminal(["ifconfig", "lo", "mtu", mtu])
+        run_command_in_terminal(["taskset", "-c", "0", "ifconfig", "lo", "mtu", mtu])
     else:
         run_command_in_terminal(["taskset", "-c", "0", "ip", "netns", "exec", "mr_server", "ifconfig", "eth3", "mtu", mtu])
 
@@ -66,21 +66,29 @@ def perform_perf3_measurement(MTU, url_string, use_localhost=True):
             "receiver_proportion_of_losses"    : receiver_proportion_of_losses}
 
 def perform_group_of_perf3_measurements(MTUs, url_string, use_localhost):
-    valid_MTUs        = []
+    # valid_MTUs        = []
     sender_bitrates   = []
     receiver_bitrates = []
     receiver_losses   = []
 
     for MTU in MTUs:
-        measurement_result = perform_perf3_measurement(MTU, url_string, use_localhost)
+        # valid_MTUs.append(MTU)
+        repeated_sender_bitrates   = []
+        repeated_receiver_bitrates = []
+        repeated_receiver_losses   = []
+        
+        for _ in range(NUMBER_OF_REPEATED_EXPERIMENTS):
+            measurement_result = perform_perf3_measurement(MTU, url_string, use_localhost)
+            if measurement_result is not None:                
+                repeated_sender_bitrates.append(measurement_result["sender_bitrate_bytes_per_second"])
+                repeated_receiver_bitrates.append(measurement_result["receiver_bitrate_bytes_per_second"])
+                repeated_receiver_losses.append(measurement_result["receiver_proportion_of_losses"])
+        
+        sender_bitrates.append(repeated_sender_bitrates)
+        receiver_bitrates.append(repeated_receiver_bitrates)
+        receiver_losses.append(repeated_receiver_losses)
 
-        if measurement_result is not None:
-            valid_MTUs.append(MTU)
-            sender_bitrates.append(measurement_result["sender_bitrate_bytes_per_second"])
-            receiver_bitrates.append(measurement_result["receiver_bitrate_bytes_per_second"])
-            receiver_losses.append(measurement_result["receiver_proportion_of_losses"])
-
-    return {"valid_MTUs"       : valid_MTUs, 
+    return {"valid_MTUs"       : MTUs, 
             "sender_bitrates"  : sender_bitrates, 
             "receiver_bitrates": receiver_bitrates, 
             "receiver_losses"  : receiver_losses}
@@ -132,7 +140,7 @@ def perform_h2load_measurement(parameters):
                     "requests_per_second": requests_per_second, 
                     "throughput_KB_per_second": throughput_KB_per_second})
 
-def perform_group_of_h2load_measurements(parameter_list_prefix, parameter_list_suffix, baseURL):
+def perform_group_of_h2load_measurements(parameter_list_prefix, parameter_list_suffix, baseURL, payload_sizes):
     delays      = []
     requests    = []
     throughputs = []
@@ -142,7 +150,7 @@ def perform_group_of_h2load_measurements(parameter_list_prefix, parameter_list_s
         print(url)
 
         parameters = parameter_list_prefix.copy()
-        parameters.extend(["../../../nghttp2/src/h2load", "--npn-list", "h3", url])
+        parameters.extend(["../nghttp2/src/h2load", "--npn-list", "h3", url])
         parameters.extend(parameter_list_suffix)
         print("parameters: ", parameters)
         

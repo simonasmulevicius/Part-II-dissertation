@@ -14,7 +14,7 @@ from testing_libraries.bashterminal.commands import *
 # MTUs = [500, 750, 800, 900, 1000, 
 #         1100, 1200, 1300, 1400, 1500, 1600, 1750, 1800, 1900, 
 #         2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
-MTUs = [6000, 8000]
+MTUs = [1280, 1500, 9000]
 
 localhost_measurements = perform_group_of_perf3_measurements(MTUs, "10.2.2.101", False)
 MTUs = localhost_measurements["valid_MTUs"]
@@ -41,25 +41,29 @@ measurements_C = receiver_losses
 
 # -------------------
 # Option 3.2 - old long (A1-B-A2)
-MTUs = [100, 200, 400, 500, 750, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1750, 1800, 1900, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
-measurements_A = [21626880.0, 65404928.0, 153008209.92, 187904819.2, 255013683.2, 276488519.68, 314069483.52, 352992624.64, 385204879.36, 418759311.36, 454998097.92, 496605593.6, 526133493.76, 566398812.16, 386547056.64, 402653184.0, 418759311.36, 445602856.96, 677799526.4, 571767521.28, 677799526.4, 820070318.08, 950261514.24, 652298158.08, 732828794.88]
-measurements_B = [19267584.0, 56492032.0, 127401984.0, 162403450.88, 222801428.48, 240249733.12, 275146342.4, 307358597.12, 336886497.28, 362387865.6, 395942297.6, 433523261.44, 456340275.2, 492579061.76, 374467461.12, 390573588.48, 406679715.84, 432181084.16, 664377753.6, 532844380.16, 634849853.44, 781147176.96, 766383226.88, 636192030.72, 714038312.96]
-measurements_C = [11.0, 14.0, 15.0, 14.0, 13.0, 13.0, 12.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 3.1, 3.0, 3.0, 3.1, 2.0, 6.8, 6.3, 4.6, 19.0, 2.6, 2.6]
+# MTUs = [100, 200, 400, 500, 750, 800, 900, 1000, 1100, 1200, 1300, 1400, 1500, 1600, 1750, 1800, 1900, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
+# measurements_A = [21626880.0, 65404928.0, 153008209.92, 187904819.2, 255013683.2, 276488519.68, 314069483.52, 352992624.64, 385204879.36, 418759311.36, 454998097.92, 496605593.6, 526133493.76, 566398812.16, 386547056.64, 402653184.0, 418759311.36, 445602856.96, 677799526.4, 571767521.28, 677799526.4, 820070318.08, 950261514.24, 652298158.08, 732828794.88]
+# measurements_B = [19267584.0, 56492032.0, 127401984.0, 162403450.88, 222801428.48, 240249733.12, 275146342.4, 307358597.12, 336886497.28, 362387865.6, 395942297.6, 433523261.44, 456340275.2, 492579061.76, 374467461.12, 390573588.48, 406679715.84, 432181084.16, 664377753.6, 532844380.16, 634849853.44, 781147176.96, 766383226.88, 636192030.72, 714038312.96]
+# measurements_C = [11.0, 14.0, 15.0, 14.0, 13.0, 13.0, 12.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 3.1, 3.0, 3.0, 3.1, 2.0, 6.8, 6.3, 4.6, 19.0, 2.6, 2.6]
+
+
+# 
+# print(MTUs_kB)
+# print(measurements_A)
+# print(measurements_B)
+# print(measurements_C)
 
 
 MTUs_kB = [mtu/1000 for mtu in MTUs]
-print(MTUs_kB)
-print(measurements_A)
-print(measurements_B)
-print(measurements_C)
+draw_boxplot_2seq(MTUs_kB, sender_bitrates, receiver_bitrates, "Sender bitrate", "Receiver bitrate", 'MTUs, kBytes', 'UDP throughput, Bytes/second', 'Iperf3 UDP throughput using different MTUs (A1-B-A2)')
 
 
-draw_line_chart_with_double_y_yxis(
-    MTUs_kB, 
-    [{  "measurements": measurements_A, "label": 'Sender bitrate'}, {  "measurements": measurements_B, "label": 'Receiver bitrate'}],
-    [{  "measurements": measurements_C, "label": 'TODO'}],
-    'MTUs, kBytes',
-    'UDP throughput, Bytes/second',
-    'Proportion of lost datagrams at the receiver side, %',
-    'Iperf3 UDP throughput using different MTUs (A1-B-A2)'
-    )
+# draw_line_chart_with_double_y_yxis(
+#     MTUs_kB, 
+#     [{  "measurements": measurements_A, "label": 'Sender bitrate'}, {  "measurements": measurements_B, "label": 'Receiver bitrate'}],
+#     [{  "measurements": measurements_C, "label": 'TODO'}],
+#     'MTUs, kBytes',
+#     'UDP throughput, Bytes/second',
+#     'Proportion of lost datagrams at the receiver side, %',
+#     'Iperf3 UDP throughput using different MTUs (A1-B-A2)'
+#     )

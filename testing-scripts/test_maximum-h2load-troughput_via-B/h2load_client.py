@@ -63,7 +63,7 @@ payload_sizes_in_bytes = ['10B', '100B', '1KiB', '10KiB', '100KiB', '1MiB',   '1
 # Precondition: server 
 # 1. Perform measurements
 set_MTU(9000, False)
-measurements_baseline  = perform_group_of_h2load_measurements(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client"], [], CLIENT_URL)
+measurements_baseline  = perform_group_of_h2load_measurements(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client"], [], CLIENT_URL, payload_sizes)
 # measurements_baseline = {}
 # measurements_baseline['throughputs'] = [[0.0791015625, 11.7, 12.3], [26.96, 27.17, 26.3], [163.33, 169.9, 166.29], [1525.76, 1464.32, 1198.08], [10608.64, 10342.4, 10536.96], [46970.88, 43827.2, 53534.72], [82094.08, 87603.2, 82964.48], [31.22, 30.34, 30.66], [30.28, 31.28, 29.61], [30.16, 30.0, 30.16]]
 

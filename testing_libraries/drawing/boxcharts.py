@@ -48,7 +48,7 @@ from io import StringIO
 
 # Box plotter
 # The code of this function is taken from: https://stackoverflow.com/questions/16592222/matplotlib-group-boxplots
-def draw_boxplot_2seq(xaxis_ticks, data_seq1, data_seq2, label1, label2, y_axis_label, title_of_plot):
+def draw_boxplot_2seq(xaxis_ticks, data_seq1, data_seq2, label1, label2, x_axis_label, y_axis_label, title_of_plot):
     ticks = xaxis_ticks
 
     def set_box_color(bp, color):
@@ -74,7 +74,7 @@ def draw_boxplot_2seq(xaxis_ticks, data_seq1, data_seq2, label1, label2, y_axis_
     plt.xticks(range(0, len(ticks) * 2, 2), ticks)
     plt.xlim(-2, len(ticks)*2)
 
-    ax.set(xlabel='Requested file size, Bytes', ylabel=y_axis_label)
+    ax.set(xlabel=x_axis_label, ylabel=y_axis_label)
     plot_title = title_of_plot
     fig.savefig(plot_title + ".png")
     plt.title(plot_title)
