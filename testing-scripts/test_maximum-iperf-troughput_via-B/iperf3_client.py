@@ -16,11 +16,11 @@ from testing_libraries.bashterminal.commands import *
 #         2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
 MTUs = [1280, 1500, 9000]
 
-localhost_measurements = perform_group_of_perf3_measurements(MTUs, "10.2.2.101", False)
-MTUs = localhost_measurements["valid_MTUs"]
-sender_bitrates = localhost_measurements["sender_bitrates"]
-receiver_bitrates = localhost_measurements["receiver_bitrates"]
-receiver_losses = localhost_measurements["receiver_losses"]
+measurement_results = perform_group_of_perf3_measurements(MTUs, "10.2.2.101", False)
+MTUs = measurement_results["valid_MTUs"]
+sender_bitrates = measurement_results["sender_bitrates"]
+receiver_bitrates = measurement_results["receiver_bitrates"]
+receiver_losses = measurement_results["receiver_losses"]
 
 measurements_A = sender_bitrates
 measurements_B = receiver_bitrates
@@ -47,11 +47,11 @@ measurements_C = receiver_losses
 # measurements_C = [11.0, 14.0, 15.0, 14.0, 13.0, 13.0, 12.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0, 3.1, 3.0, 3.0, 3.1, 2.0, 6.8, 6.3, 4.6, 19.0, 2.6, 2.6]
 
 
-# 
-# print(MTUs_kB)
-# print(measurements_A)
-# print(measurements_B)
-# print(measurements_C)
+
+print(MTUs_kB)
+print(measurements_A)
+print(measurements_B)
+print(measurements_C)
 
 
 MTUs_kB = [mtu/1000 for mtu in MTUs]
