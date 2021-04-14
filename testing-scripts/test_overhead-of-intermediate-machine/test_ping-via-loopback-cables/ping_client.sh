@@ -1,0 +1,1 @@
+taskset -c 1 ip netns exec mr_client ping 10.1.1.101 -c 10
