@@ -6,8 +6,6 @@ from testing_libraries.drawing.boxcharts import *
 from testing_libraries.util.conversion import *
 from testing_libraries.bashterminal.commands import *
 
-# -------------------
-# Option 1 - original 
 
 # MTUs = [576, 600, 700, 800, 900, 1000, 
 #         1100, 1200, 1300, 1400, 1500, 1600, 1700, 1800, 1900, 

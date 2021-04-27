@@ -55,7 +55,9 @@ print(measurements_C)
 
 
 MTUs_kB = [mtu/1000 for mtu in MTUs]
-draw_boxplot_2seq(MTUs_kB, sender_bitrates, receiver_bitrates, "Sender bitrate", "Receiver bitrate", 'MTUs, kBytes', 'UDP throughput, Bytes/second', 'Iperf3 UDP throughput using different MTUs (A1-B-A2)')
+draw_boxplot_2seq(MTUs_kB, sender_bitrates, receiver_bitrates, 
+    "Sender bitrate", "Receiver bitrate", 'MTUs, kBytes', 
+    'UDP throughput, Bytes/second', 'Iperf3 UDP throughput using different MTUs (A1-B-A2)')
 
 
 # draw_line_chart_with_double_y_yxis(
