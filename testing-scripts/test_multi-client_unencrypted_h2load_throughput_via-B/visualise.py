@@ -20,13 +20,13 @@ from statistics import *
 # print(onlyfiles)
 
 
-number_of_experiments=3
+number_of_experiments=10
 
 
 
 # Using writing functionality from https://www.programiz.com/python-programming/writing-csv-files
 with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
-    results_writer = csv.writer(summary_of_results_file, delimiter=';')
+    results_writer = csv.writer(summary_of_results_file, delimiter=',')
     results_writer.writerow(["number_of_experiments:", number_of_experiments])
     results_writer.writerow(["delay_ms", "probability_of_loss_percentage", "payload_size", "clients_requests", 
         "min_completion_time_ms",              "max_completion_time_ms",              "avg_completion_time_ms",              "stdev_completion_time_ms",
@@ -35,8 +35,8 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
         ])
 
     # 1. Extract data
-    for delay_ms in [0, 1]: #1 10 100
-        for probability_of_loss_percentage in [0, 0.0001, 0.001, 0.01, 0.1, 1]: #0.0001 0.001 0.01 0.1 1 
+    for delay_ms in [0]: #1 10 100
+        for probability_of_loss_percentage in [0]: #0.0001 0.001 0.01 0.1 1 
             for payload_size in [1000000, 10000000, 100000000, 1000000000]: #1000000000 # 10000000 100000000 1000000000
                 for clients_requests in [1, 10]:
 
