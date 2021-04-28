@@ -31,7 +31,7 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
     results_writer.writerow(["delay_ms", "probability_of_loss_percentage", "payload_size", "clients_requests", 
         "min_completion_time_ms",              "max_completion_time_ms",              "avg_completion_time_ms",              "stdev_completion_time_ms",
         "min_requests_per_second",             "max_requests_per_second",             "avg_requests_per_second",             "stdev_requests_per_second",
-        "min_throughput_kilobytes_per_second", "max_throughput_kilobytes_per_second", "avg_throughput_kilobytes_per_second", "stdev_throughput_kilobytes_per_second",
+        "min_throughput_megabytes_per_second", "max_throughput_megabytes_per_second", "avg_throughput_megabytes_per_second", "stdev_throughput_megabytes_per_second",
         ])
 
     # 1. Extract data
@@ -50,7 +50,7 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
 
                     list_completion_time_ms = []
                     list_requests_per_second = []
-                    list_throughput_kilobytes_per_second = []
+                    list_throughput_megabytes_per_second = []
                     for experiment_number in range(1,number_of_experiments+1):
                         # print("----")
                         # print ("  experiment_number              : ", experiment_number)
@@ -70,17 +70,17 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                             line = reader.readline()
                             requests_per_second = float(line)
 
-                        with open(individual_experiment_folder+'/throughput_kilobytes_per_second.txt', 'r') as reader:
+                        with open(individual_experiment_folder+'/throughput_megabytes_per_second.txt', 'r') as reader:
                             line = reader.readline()
-                            throughput_kilobytes_per_second = float(line)
+                            throughput_megabytes_per_second = float(line)
                             
                         print("    completion_time_ms              : ", float(line))
                         print("    requests_per_second             : ", float(requests_per_second))
-                        print("    throughput_kilobytes_per_second : ", float(throughput_kilobytes_per_second))
+                        print("    throughput_megabytes_per_second : ", float(throughput_megabytes_per_second))
 
                         list_completion_time_ms.append(completion_time_ms)
                         list_requests_per_second.append(requests_per_second)
-                        list_throughput_kilobytes_per_second.append(throughput_kilobytes_per_second)
+                        list_throughput_megabytes_per_second.append(throughput_megabytes_per_second)
 
 
                     #1.1 Summarise data
@@ -96,10 +96,10 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                     stdev_requests_per_second = stdev(list_requests_per_second)
 
 
-                    min_throughput_kilobytes_per_second = max(list_throughput_kilobytes_per_second)  
-                    max_throughput_kilobytes_per_second = min(list_throughput_kilobytes_per_second)   
-                    avg_throughput_kilobytes_per_second = mean(list_throughput_kilobytes_per_second)  
-                    stdev_throughput_kilobytes_per_second = stdev(list_throughput_kilobytes_per_second)  
+                    min_throughput_megabytes_per_second = max(list_throughput_megabytes_per_second)  
+                    max_throughput_megabytes_per_second = min(list_throughput_megabytes_per_second)   
+                    avg_throughput_megabytes_per_second = mean(list_throughput_megabytes_per_second)  
+                    stdev_throughput_megabytes_per_second = stdev(list_throughput_megabytes_per_second)  
 
 
 
@@ -107,7 +107,7 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                     results_writer.writerow([delay_ms, probability_of_loss_percentage, payload_size, clients_requests,
                         min_completion_time_ms,              max_completion_time_ms,              avg_completion_time_ms,              stdev_completion_time_ms,
                         min_requests_per_second,             max_requests_per_second,             avg_requests_per_second,             stdev_requests_per_second,
-                        min_throughput_kilobytes_per_second, max_throughput_kilobytes_per_second, avg_throughput_kilobytes_per_second, stdev_throughput_kilobytes_per_second])
+                        min_throughput_megabytes_per_second, max_throughput_megabytes_per_second, avg_throughput_megabytes_per_second, stdev_throughput_megabytes_per_second])
 
 
 # 2. Visualise data

@@ -3,15 +3,15 @@ source env.sh
 
 flame_graph_folder="/root/evaluation/FlameGraph"
 nghttp2_folder="/root/evaluation/unencrypted_stack/nghttp2"
-number_of_experiments=3 #10
+number_of_experiments=10 #10
 
 for delay_ms in 0 #1 10 # 100
 do
     for probability_of_loss in  0 #0.0001 0.001 0.01 0.1 1 
     do
-        for payload_size in 1000000 #10000000 100000000 1000000000
+        for payload_size in 1000000 10000000 100000000 1000000000
         do
-            for clients_requests in 1 #10 # 
+            for clients_requests in 1 10 # 
             do
                 group_experiment_description="payload-size_${payload_size}____delay-ms_${delay_ms}____loss-rate-percent_${probability_of_loss}____clients-requests_${clients_requests}"
                 experiment_group_folder="./results/${group_experiment_description}"
@@ -75,27 +75,26 @@ do
 
                     if [ "${throughput_string:(-4)}" == "GB/s" ] 
                     then
-                        throughput=$(bc -l <<<"${throughput_string::(-4)}*1024*1024")
+                        throughput_megabytes_per_second=$(bc -l <<<"${throughput_string::(-4)}*1024*1024*1024/1000/1000")
                     
                     elif [ "${throughput_string:(-4)}" == "MB/s" ] 
                     then
-                        throughput=$(bc -l <<<"${throughput_string::(-4)}*1024")
+                        throughput_megabytes_per_second=$(bc -l <<<"${throughput_string::(-4)}*1024*1024/1000/1000")
                     elif [ "${throughput_string:(-4)}" == "kB/s" ] || [ "${throughput_string:(-4)}" == "KB/s" ]
                     then
-                        throughput=$(bc -l <<<"${throughput_string::(-4)}*1")
+                        throughput_megabytes_per_second=$(bc -l <<<"${throughput_string::(-4)}*1024/1000/1000")
                     else
                         # B/s
-                        throughput=$(bc -l <<<"${throughput_string::(-3)}/1024")
+                        throughput_megabytes_per_second=$(bc -l <<<"${throughput_string::(-3)}/1000/1000")
                     fi
 
-
-                    printf "    completion_time_ms     : [${completion_time_ms}] (ms)\n"
-                    printf "    requests_per_second    : [${requests_per_second}] \n"
-                    printf "    throughput             : [${throughput}] (kiloBytes/s) \n"
+                    printf "    completion_time_ms              : [${completion_time_ms}] (ms)\n"
+                    printf "    requests_per_second             : [${requests_per_second}] \n"
+                    printf "    throughput_megabytes_per_second : [${throughput_megabytes_per_second}] (MBytes/s) \n"
 
                     echo "${completion_time_ms}" > "${individual_experiment_folder}/completion_time_ms.txt"
                     echo "${requests_per_second}" > "${individual_experiment_folder}/requests_per_second.txt"
-                    echo "${throughput}" > "${individual_experiment_folder}/throughput_kilobytes_per_second.txt"
+                    echo "${throughput_megabytes_per_second}" > "${individual_experiment_folder}/throughput_megabytes_per_second.txt"
 
 
                     printf "  --------------------------------\n"
