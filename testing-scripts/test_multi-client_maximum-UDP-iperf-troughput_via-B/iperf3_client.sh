@@ -1,15 +1,42 @@
 #!/bin/bash
 source env.sh
 
-number_of_experiments=10
+number_of_experiments=10 #
+draw_a_diagram=0
 
-for delay_ms in 0 1 10 100
+# $1 - receiver_throughput
+# $2 - receiver_throughput_units
+convert_throughput_to_MBytes_per_second() {
+
+    return_receiver_throughput_megabytes_per_second="$1"
+    if [ "$2" == "Gbits/sec" ] 
+    then
+        # echo "Units:Gbits/sec?"
+        return_receiver_throughput_megabytes_per_second=$(bc -l <<<"$1/8*1024*1024*1024/1000/1000")
+    elif [ "$2" == "Mbits/sec" ] 
+    then
+        # echo "Units:Mbits/sec?"
+        return_receiver_throughput_megabytes_per_second=$(bc -l <<<"$1/8*1024*1024/1000/1000")
+    elif [ "$2" == "Kbits/sec" ] || [ "$1" == "kbits/sec" ]
+    then
+        # echo "Units:Kbits/sec?"
+        return_receiver_throughput_megabytes_per_second=$(bc -l <<<"$1/8*1024/1000/1000")
+    else
+        # echo "Units:bits/sec?"
+        return_receiver_throughput_megabytes_per_second=$(bc -l <<<"$1/8/1000/1000")
+    fi
+    echo "${return_receiver_throughput_megabytes_per_second}"
+}
+
+
+
+for delay_ms in 0 #1 10 100
 do
-    for probability_of_loss in  0 #0.0001 0.001 0.01 0.1 1 
+    for probability_of_loss in 0 #0.0001 0.001 0.01 0.1 1 
     do
         for payload_size in 1000000 10000000 100000000 1000000000
         do
-            for clients_requests in 1 10 
+            for clients_requests in 1 10 # 10 
             do
                 group_experiment_description="payload-size_${payload_size}____delay-ms_${delay_ms}____loss-rate-percent_${probability_of_loss}____clients-requests_${clients_requests}"
                 experiment_group_folder="./results/${group_experiment_description}"
@@ -31,16 +58,26 @@ do
                     printf "  delay-ms                  : ${delay_ms}\n"
                     printf "  clients_requests          : ${clients_requests}\n"
                     printf "  --------------------------------\n"
+
                     individual_experiment_folder="${experiment_group_folder}/${experiment_number}"
                     mkdir "${individual_experiment_folder}"
                     echo "  individual_experiment_folder: ${individual_experiment_folder}"
 
-                    printf "  1.1 Run throughput test\n"
-                    command=(        'taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}"' )
-                                      
-                    printf "   1.1.1 Running command: '${command[@]}' \n"
-                    command_output=$( taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}" | tee "${individual_experiment_folder}/result.txt" )
-                    
+
+                    if [ ${draw_a_diagram} == 1 ] 
+                    then
+                        printf "  1.1 Run throughput test\n"
+                        command=(        'taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}" --interval 0.1' )
+                                            
+                        printf "   1.1.1 Running command: '${command[@]}' \n"
+                        command_output=$( taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}"  --interval 0.1 | tee "${individual_experiment_folder}/result.txt" )
+                    else
+                        printf "  1.1 Run throughput test\n"
+                        command=(        'taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}"' )
+                                            
+                        printf "   1.1.1 Running command: '${command[@]}' \n"
+                        command_output=$( taskset -c 1 ip netns exec mr_client iperf3 -c 10.2.2.101 --udp -b 0 --bytes "${payload_size}" --parallel "${clients_requests}"  | tee "${individual_experiment_folder}/result.txt" )
+                    fi
 
                     printf "  --------------------------------\n"
                     printf "  2 Analyse output \n"
@@ -58,31 +95,53 @@ do
                     printf "    receiver_throughput                      : [${receiver_throughput}] \n"
                     printf "    receiver_throughput_units                : [${receiver_throughput_units}] \n"
 
-                    receiver_throughput_megabytes_per_second=receiver_throughput
+                    receiver_throughput_megabytes_per_second=$( convert_throughput_to_MBytes_per_second ${receiver_throughput} ${receiver_throughput_units}) 
 
-
-                    if [ "${receiver_throughput_units}" == "Gbits/sec" ] 
-                    then
-                        # echo "Units:Gbits/sec?"
-                        # (1/8*1024*1024*1024/1000/1000) =  134.217728
-                        receiver_throughput_megabytes_per_second=$(bc -l <<<"${receiver_throughput}*134.217728")
-                    elif [ "${receiver_throughput_units}" == "Mbits/sec" ] 
-                    then
-                        # echo "Units:Mbits/sec?"
-                        # (1/8*1024*1024/1000/1000) =  0.131072
-                        receiver_throughput_megabytes_per_second=$(bc -l <<<"${receiver_throughput}*0.131072")
-                    elif [ "${receiver_throughput_units}" == "Kbits/sec" ] || [ "${receiver_throughput_units}" == "kbits/sec" ]
-                    then
-                        # echo "Units:Kbits/sec?"
-                         # (1/8*1024/1000/1000) = 0.000128
-                        receiver_throughput_megabytes_per_second=$(bc -l <<<"${receiver_throughput}*0.000128")
-                    else
-                        # echo "Units:bits/sec?"
-                        receiver_throughput_megabytes_per_second=$(bc -l <<<"${receiver_throughput}/8000000")
-                    fi
-
-                    printf "    receiver_throughput_megabytes_per_second : [${receiver_throughput_megabytes_per_second}] (megaBytes/s) \n"
+                    echo "    receiver_throughput_megabytes_per_second : [${receiver_throughput_megabytes_per_second}] (megaBytes/s) "
                     echo "${receiver_throughput_megabytes_per_second}" > "${individual_experiment_folder}/receiver_throughput_megabytes_per_second.txt"
+
+
+                    receivers_results_summary=$( echo "${relevant_fields}" | grep "receiver" | tail  -1 )
+                    completion_time=$( echo ${receivers_results_summary:13:7} | tr -d ' ' )
+                    echo "    completion_time                          : [${completion_time}] (sec)"
+                    echo "${completion_time}" > "${individual_experiment_folder}/completion_time.txt"
+
+
+
+
+
+                    if [ ${draw_a_diagram} == 1 ] 
+                    then
+                        # Some commands follow instructions from: https://stackoverflow.com/questions/13380607/how-to-use-sed-to-remove-the-last-n-lines-of-a-file
+                        if [ ${clients_requests} == 1 ] 
+                        then
+                            echo "  --------------------------------"
+                            echo "  command_output:"
+                            echo "${command_output}"
+                            echo "  --------------------------------"
+
+                            diagram_title="UDP throughput (1 client) when transfering ${payload_size} Bytes"
+                            individual_throughput_samples=$( grep " sec " "${individual_experiment_folder}/result.txt"  | sed '$d' | sed '$d' | tr - " " | awk '{
+                                if ($9 =="Gbits/sec")
+                                    {print $3, $8*1024*1024*1024/1000/1000}
+
+                                else if ($9 =="Mbits/sec")
+                                    {print $3, $8*1024*1024/1000/1000}
+
+                                else if ($9 =="Kbits/sec")
+                                    {print $3, $8*1024/1000/1000}
+
+                                else 
+                                    {print $3, $8*/1000/1000}
+                                }' |
+                                gnuplot -p -e 'set title "${diagram_title}" ;  set xlabel "Time (s)"; set ylabel "Throughput over the interval (MBits/s)" ;  set yrange[0:4800] ; plot  "/dev/stdin" title "iperf3 UDP throughput" with linespoints'        )
+                            echo ${individual_throughput_samples} > "${individual_experiment_folder}/throughput_samples_throughout_time.txt"
+                            echo "  individual_throughput_samples:"
+                            echo "${individual_throughput_samples}"
+                            echo "  --------------------------------"
+
+                        fi
+                    fi
 
                     printf "  --------------------------------\n"
                     printf "\n\n\n"
