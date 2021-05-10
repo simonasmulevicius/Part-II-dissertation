@@ -11,6 +11,7 @@ import os
 from os.path import isfile, join
 import csv
 from statistics import *
+import json
 
 
 
@@ -54,19 +55,22 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                         
                         individual_experiment_folder= str(experiment_group_folder) + "/" + str(experiment_number)
 
-                        # According to: https://realpython.com/read-write-files-python/
-                        with open(individual_experiment_folder+'/receiver_throughput_megabytes_per_second.txt', 'r') as reader:
-                            line = reader.readline()
-                            receiver_throughput_megabits_per_second = float(line)*8
-                        print("    receiver_throughput_megabits_per_second : ", float(receiver_throughput_megabits_per_second))
-                        list_receiver_throughput_megabits_per_second.append(receiver_throughput_megabits_per_second)
 
-                        with open(individual_experiment_folder+'/completion_time.txt', 'r') as reader:
-                            line = reader.readline()
-                            completion_time_in_miliseconds = float(line)*1000
-                        print("    completion_time_in_miliseconds : ", float(completion_time_in_miliseconds))
-                        list_completion_time_in_miliseconds.append(completion_time_in_miliseconds)
+                        # File reading functionality is written according instructions from:
+                        # https://stackabuse.com/reading-and-writing-json-to-a-file-in-python/
+                        # https://realpython.com/read-write-files-python/
+                        with open(individual_experiment_folder+'/result.json') as results_file:
+                            experiment_data = json.load(results_file)
+                            experiment_summary = experiment_data['end']['sum_received']
 
+                            receiver_throughput_megabits_per_second = float(experiment_summary['bits_per_second'])/1000000
+                            list_receiver_throughput_megabits_per_second.append(receiver_throughput_megabits_per_second)
+
+                            completion_time_in_miliseconds = float(experiment_summary['seconds'])*1000
+                            list_completion_time_in_miliseconds.append(completion_time_in_miliseconds)
+
+                            print("    completion_time_in_miliseconds : ", float(completion_time_in_miliseconds))
+                            print("    receiver_throughput_megabits_per_second : ", float(receiver_throughput_megabits_per_second))
 
 
                     #1.1 Summarise data
