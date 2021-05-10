@@ -12,14 +12,13 @@ def run_command_in_terminal(parameters):
     return command_output
 
 
-NGTCP2_RELATIVE_LOCATION = "../../../ngtcp2/"
+NGTCP2_RELATIVE_LOCATION = "/root/evaluation/unencrypted_stack/ngtcp2/"
 
-run_command_in_terminal(["taskset", "0x1", "ip", "netns", "exec", "mr_server", 
+run_command_in_terminal(["taskset", "-c", "0", "ip", "netns", "exec", "mr_server", 
                         NGTCP2_RELATIVE_LOCATION + "/examples/server", 
                         "--htdocs", NGTCP2_RELATIVE_LOCATION + "/examples/servers_folder", 
                         "-q", 
                         "--max-dyn-length=4g", 
-                        "--max-udp-payload-size=1500", 
                         "10.2.2.101", "7777", 
                         NGTCP2_RELATIVE_LOCATION + "/examples/server.key", 
                         NGTCP2_RELATIVE_LOCATION + "/examples/server.cert"])

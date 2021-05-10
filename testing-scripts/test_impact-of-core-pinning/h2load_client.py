@@ -4,16 +4,17 @@ from io import StringIO
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import json
 
 # 0. Constants
-NUMBER_OF_REPEATED_EXPERIMENTS = 3
+NUMBER_OF_REPEATED_EXPERIMENTS = 10
 
 
-# payload_sizes          = [10,     100,   1024,  10240 , 102400 ]#, 1048576, 10485760, 104857600, 1073741824, 4294967295]
-# payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB']#,  '1MB',   '10MB',   '100MB',      '1GB',      '4GB']
+payload_sizes          = [10,     100,   1000,  10000 , 100000 , 1000000, 10000000, 100000000, 1000000000]
+payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB',   '1MB',   '10MB',   '100MB',      '1GB']
 
-payload_sizes          = [10240] #,  102400, 1048576, 10485760] #, 104857600] #, 1073741824, 4294967295]
-payload_sizes_in_bytes = ['10KB'] #, '100KB',  '1MB',   '10MB'] #,   '100MB'] #,      '1GB',      '4GB']
+# payload_sizes          = [10240] #,  102400, 1048576, 10485760] #, 104857600] #, 1073741824, 4294967295]
+# payload_sizes_in_bytes = ['10KB'] #, '100KB',  '1MB',   '10MB'] #,   '100MB'] #,      '1GB',      '4GB']
 
 # payload_sizes          = [   10,    100,  1024,  10240,  102400, 1048576, 10485760, 104857600, 1073741824, 4294967295]
 # payload_sizes_in_bytes = ['10B', '100B', '1KB', '10KB', '100KB',   '1MB',   '10MB',   '100MB',       '1GB',     '4GB']
@@ -46,25 +47,26 @@ def perform_measurement(parameters):
 
             
             if measurements[2][-4].isdigit() and "B/s" == measurements[2][-3:]:
-                throughput_KB_per_second =  float(measurements[2][:-3])/1024
+                throughput_KB_per_second =  float(measurements[2][:-3])/1000
             else:
                 assert (not any(symbol.isdigit() for symbol in measurements[2][-4:]))
                 throughput_KB_per_second = float(measurements[2][:-4])
 
                 if "kB/s" == measurements[2][-4:] or "KB/s" == measurements[2][-4:]:
-                    throughput_KB_per_second *= 1
+                    throughput_KB_per_second *= 1024/1000
                 elif "MB/s" == measurements[2][-4:]:
-                    throughput_KB_per_second *= 1024
+                    throughput_KB_per_second *= 1024*1024/1000
                 elif "GB/s" == measurements[2][-4:]:
-                    throughput_KB_per_second *= 1024*1024
+                    throughput_KB_per_second *= 1024*1024*1024/1000
             
+            throughput_Mbits_per_second = throughput_KB_per_second*8/1000
             print(total_delay_ms, "ms")
             print(requests_per_second, "req/s")
-            print(throughput_KB_per_second, "KB/s")
+            print(throughput_Mbits_per_second, "MBits/s")
 
             return ({"total_delay_ms": total_delay_ms,
                     "requests_per_second": requests_per_second, 
-                    "throughput_KB_per_second": throughput_KB_per_second})
+                    "throughput_Mbits_per_second": throughput_Mbits_per_second})
 
 def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
     delays      = []
@@ -76,7 +78,7 @@ def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
         print(url)
 
         parameters = parameter_list_prefix.copy()
-        parameters.extend(["../../../nghttp2/src/h2load", "--npn-list", "h3", url])
+        parameters.extend(["/root/evaluation/unencrypted_stack/nghttp2/src/h2load", "--npn-list", "h3", url])
         parameters.extend(parameter_list_suffix)
         print("parameters: ", parameters)
         
@@ -88,7 +90,7 @@ def perform_group_of_measurements(parameter_list_prefix, parameter_list_suffix):
             measurements = perform_measurement(parameters)
             repeated_delays.append(measurements['total_delay_ms'])
             repeated_requests.append(measurements['requests_per_second'])
-            repeated_throughputs.append(measurements['throughput_KB_per_second'])
+            repeated_throughputs.append(measurements['throughput_Mbits_per_second'])
 
         delays.append(repeated_delays)
         requests.append(repeated_requests)
@@ -190,21 +192,43 @@ def draw_boxplot_2seq(xaxis_ticks, data_seq1, data_seq2, label1, label2, y_axis_
 # ---------------------------------------------------------
 # Precondition: server 
 # 1. Perform measurements
-measurements_on_same_cores       = perform_group_of_measurements(["taskset", "0x1", "ip", "netns", "exec", "mr_client"], [])
-measurements_on_different_cores  = perform_group_of_measurements(["taskset", "0x2", "ip", "netns", "exec", "mr_client"], [])
+measurements_on_same_cores       = perform_group_of_measurements(["taskset", "-c", "0", "ip", "netns", "exec", "mr_client"], [])
+measurements_on_different_cores  = perform_group_of_measurements(["taskset", "-c", "1", "ip", "netns", "exec", "mr_client"], [])
 
 print(payload_sizes)
 print(measurements_on_same_cores['throughputs'])
 print(measurements_on_different_cores['throughputs'])
 
+
+
+
+results_output_JSON={
+    "payload_sizes": payload_sizes,
+    "measurements_on_same_cores_throughputs": measurements_on_same_cores['throughputs'],
+    "measurements_on_different_cores_throughputs": measurements_on_different_cores['throughputs']
+}
+
+with open('h2load_results.txt', 'w') as h2load_results_file:
+    json.dump(results_output_JSON, h2load_results_file)
+
+
+
 # 2. Draw measurements
 draw_boxplot_2seq(payload_sizes_in_bytes,
              measurements_on_same_cores['throughputs'], 
              measurements_on_different_cores['throughputs'],
-             'Client and server on the same core',
-             'Client and server on different cores',
-             'Throughput, KBytes/second', 
+             'QUIC client and server on the same core',
+             'QUIC client and server on different cores',
+             'Throughput, MBits/second', 
              'Throughput when packets go via machine B (A1-to-B-to-A2)')
+
+
+
+
+
+
+
+
 
 # draw_boxplot_2seq(payload_sizes_in_bytes,
 #              measurements_on_same_cores['delays'], 

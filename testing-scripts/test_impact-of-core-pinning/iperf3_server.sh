@@ -1,0 +1,1 @@
+taskset -c 0 ip netns exec mr_server /root/evaluation/iperf/src/iperf3 -s
