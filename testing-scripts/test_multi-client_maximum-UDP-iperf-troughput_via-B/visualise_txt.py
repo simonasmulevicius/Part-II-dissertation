@@ -20,7 +20,7 @@ number_of_experiments=10
 
 
 # Using writing functionality from https://www.programiz.com/python-programming/writing-csv-files
-with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
+with open('summary_of_results_txt.csv', 'w', newline='') as summary_of_results_file:
     results_writer = csv.writer(summary_of_results_file, delimiter=',')
     results_writer.writerow(["number_of_experiments:", number_of_experiments])
     results_writer.writerow(["delay_ms", "probability_of_loss_percentage", "payload_size", "clients_requests",      
@@ -64,26 +64,48 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                         # File reading functionality is written according instructions from:
                         # https://stackabuse.com/reading-and-writing-json-to-a-file-in-python/
                         # https://realpython.com/read-write-files-python/
-                        with open(individual_experiment_folder+'/result.json') as results_file:
-                            experiment_data = json.load(results_file)
-                            experiment_summary = experiment_data['end']['sum']
+                        with open(individual_experiment_folder+'/result.txt') as results_file:
+                            file_contents = results_file.read()
+                            # print("file_contents:")
+                            # print(file_contents)
 
-                            receiver_throughput_megabits_per_second = float(experiment_summary['bits_per_second'])/1000000
+                            # Adopted solution from: 
+                            # https://stackoverflow.com/questions/2557808/search-and-get-a-line-in-python
+                            throughput_lines = [line for line in file_contents.split('\n') if "receiver" in line]
+                            receivers_summary = throughput_lines[-1]
+
+                            print("receivers_summary: ", receivers_summary)
+
+
+
+                            receiver_throughput_megabits_per_second=float(receivers_summary[41:46].replace(" ", ""))
+                            print("receiver_throughput_megabits_per_second: [", receiver_throughput_megabits_per_second, "]")
+
+                            receiver_throughput_units=receivers_summary[46:57].replace(" ", "")
+                            print("receiver_throughput_units: [", receiver_throughput_units, "]")
+
+                            if "Gbits/sec" == receiver_throughput_units:
+                                receiver_throughput_megabits_per_second *= 1024*1024*1024/1000/1000
+                            elif "Mbits/sec" == receiver_throughput_units:
+                                receiver_throughput_megabits_per_second *= 1024*1024/1000/1000
+                            elif "kbits/sec" == receiver_throughput_units or "Kbits/sec" == receiver_throughput_units :
+                                receiver_throughput_megabits_per_second *= 1024/1000/1000
+
+                            print("    receiver_throughput_megabits_per_second : ", float(receiver_throughput_megabits_per_second))
                             list_receiver_throughput_megabits_per_second.append(receiver_throughput_megabits_per_second)
 
-                            completion_time_in_miliseconds = float(experiment_summary['seconds'])*1000
+                            completion_time_in_miliseconds = float(receivers_summary.split("-")[1].split(" ")[0])*1000
                             list_completion_time_in_miliseconds.append(completion_time_in_miliseconds)
 
-                            lost_percent = float(experiment_summary['lost_percent'])
-                            list_lost_percent.append(lost_percent)
+                            # lost_percent = float(experiment_summary['lost_percent'])
+                            # list_lost_percent.append(lost_percent)
 
-                            emitted_bytes = float(experiment_summary['bytes'])
-                            list_emitted_bytes.append(emitted_bytes)
+                            # emitted_bytes = float(experiment_summary['bytes'])
+                            # list_emitted_bytes.append(emitted_bytes)
 
                             print("    completion_time_in_miliseconds          : ", float(completion_time_in_miliseconds))
-                            print("    receiver_throughput_megabits_per_second : ", float(receiver_throughput_megabits_per_second))
-                            print("    lost_percent                            : ", float(lost_percent))
-                            print("    emitted_bytes                           : ", float(emitted_bytes))
+                            # print("    lost_percent                            : ", float(lost_percent))
+                            # print("    emitted_bytes                           : ", float(emitted_bytes))
 
 
                     #1.1 Summarise data
@@ -98,20 +120,21 @@ with open('summary_of_results.csv', 'w', newline='') as summary_of_results_file:
                     avg_completion_time_in_miliseconds   = mean(list_completion_time_in_miliseconds)  
                     stdev_completion_time_in_miliseconds = stdev(list_completion_time_in_miliseconds)  
 
-                    min_lost_percent   = max(list_lost_percent)  
-                    max_lost_percent   = min(list_lost_percent)   
-                    avg_lost_percent   = mean(list_lost_percent)  
-                    stdev_lost_percent = stdev(list_lost_percent)  
+                    # min_lost_percent   = max(list_lost_percent)  
+                    # max_lost_percent   = min(list_lost_percent)   
+                    # avg_lost_percent   = mean(list_lost_percent)  
+                    # stdev_lost_percent = stdev(list_lost_percent)  
 
 
-                    min_emitted_bytes   = max(list_emitted_bytes)  
-                    max_emitted_bytes   = min(list_emitted_bytes)   
-                    avg_emitted_bytes   = mean(list_emitted_bytes)  
-                    stdev_emitted_bytes = stdev(list_emitted_bytes)  
+                    # min_emitted_bytes   = max(list_emitted_bytes)  
+                    # max_emitted_bytes   = min(list_emitted_bytes)   
+                    # avg_emitted_bytes   = mean(list_emitted_bytes)  
+                    # stdev_emitted_bytes = stdev(list_emitted_bytes)  
 
                     #1.2 Write summarised data
                     results_writer.writerow([delay_ms, probability_of_loss_percentage, payload_size, clients_requests,
                         min_receiver_throughput_megabits_per_second, max_receiver_throughput_megabits_per_second, avg_receiver_throughput_megabits_per_second, stdev_receiver_throughput_megabits_per_second,
                         min_completion_time_in_miliseconds         , max_completion_time_in_miliseconds         , avg_completion_time_in_miliseconds         , stdev_completion_time_in_miliseconds,
-                        min_lost_percent                           , max_lost_percent                           , avg_lost_percent                           , stdev_lost_percent,
-                        min_emitted_bytes                          , max_emitted_bytes                          , avg_emitted_bytes                          , stdev_emitted_bytes             ])
+                        # min_lost_percent                           , max_lost_percent                           , avg_lost_percent                           , stdev_lost_percent,
+                        # min_emitted_bytes                          , max_emitted_bytes                          , avg_emitted_bytes                          , stdev_emitted_bytes             
+                        ])
